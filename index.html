@@ -66,13 +66,14 @@
 </div>
 
 <script type="module">
-    // Firebase SDK imports
+    // Firebase SDK 導入
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     // -------------------------------------------------------------------------
     // 全域變數和 Firebase 配置
+    // 這些變數由 Canvas 環境自動提供，無須手動更改
     // -------------------------------------------------------------------------
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
@@ -163,6 +164,28 @@
     };
 
     /**
+     * 更新圖表數據。
+     * @param {Array<Object>} data 包含溫濕度讀數的陣列。
+     */
+    const updateChartData = (data) => {
+        // 根據 timestamp 屬性對數據進行排序
+        data.sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
+        
+        const labels = data.map(d => d.timestamp.toDate().toLocaleTimeString());
+        const temperatures = data.map(d => d.temperature);
+        const humidities = data.map(d => d.humidity);
+
+        // 更新圖表數據和標籤
+        temperatureChart.data.labels = labels;
+        temperatureChart.data.datasets[0].data = temperatures;
+        temperatureChart.update();
+
+        humidityChart.data.labels = labels;
+        humidityChart.data.datasets[0].data = humidities;
+        humidityChart.update();
+    };
+
+    /**
      * 處理 MQTT 接收到的數據並更新儀表板和 Firestore。
      * @param {string} messageString 接收到的 MQTT 訊息。
      */
@@ -196,10 +219,11 @@
             document.getElementById('humidity-display').textContent = hum.toFixed(1);
             
             try {
+                // 將數據寫入 Firestore
                 await addDoc(collection(db, `artifacts/${appId}/public/data/th_readings`), {
                     temperature: temp,
                     humidity: hum,
-                    timestamp: serverTimestamp()
+                    timestamp: serverTimestamp() // 使用伺服器時間戳，確保時間正確
                 });
                 console.log("✅ 數據已成功寫入 Firestore。");
             } catch (firestoreError) {
@@ -261,6 +285,8 @@
      */
     const listenToFirestore = () => {
         const thReadingsRef = collection(db, `artifacts/${appId}/public/data/th_readings`);
+        // 注意：為了避免需要建立額外索引，我們不使用 orderBy。
+        // 改為在客戶端對數據進行排序。
         const q = query(thReadingsRef, limit(50));
 
         onSnapshot(q, (querySnapshot) => {
@@ -271,26 +297,27 @@
                     readings.push(data);
                 }
             });
-            readings.sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
-            
-            if (readings.length > 0) {
-                const labels = readings.map(d => d.timestamp.toDate().toLocaleTimeString());
-                const temperatures = readings.map(d => d.temperature);
-                const humidities = readings.map(d => d.humidity);
-
-                temperatureChart.data.labels = labels;
-                temperatureChart.data.datasets[0].data = temperatures;
-                temperatureChart.update();
-
-                humidityChart.data.labels = labels;
-                humidityChart.data.datasets[0].data = humidities;
-                humidityChart.update();
-            }
-            console.log("✅ 從 Firestore 收到即時更新 (已排序):", readings);
+            console.log("✅ 從 Firestore 收到即時更新:", readings);
+            updateChartData(readings);
         }, (error) => {
             console.error("❌ Firestore 監聽失敗:", error);
             displayError(`Firestore 監聽失敗: ${error.message}`);
         });
+    };
+
+    /**
+     * 發送一筆測試數據到 Firestore。
+     */
+    const sendTestData = async () => {
+        try {
+            await addDoc(collection(db, `artifacts/${appId}/public/data/test_readings`), {
+                testValue: Math.random() * 100,
+                timestamp: serverTimestamp()
+            });
+            console.log("✅ 測試數據已成功寫入 Firestore。請檢查您的 Firebase Console。");
+        } catch (e) {
+            console.error("❌ 寫入測試數據失敗:", e);
+        }
     };
 
     /**
@@ -335,6 +362,9 @@
             userId = auth.currentUser?.uid || crypto.randomUUID();
             document.getElementById('user-id-display').textContent = `使用者 ID: ${userId}`;
             console.log("✅ Firebase 已成功初始化。");
+            
+            // 在初始化成功後，發送一筆測試數據
+            sendTestData();
             
             listenToFirestore();
             connectToMqtt();
