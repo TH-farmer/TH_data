@@ -71,11 +71,22 @@
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
     // -------------------------------------------------------------------------
-    // 從 Canvas 環境取得 Firebase 專案配置資訊
-    // 請勿在此處手動輸入您的配置，否則將導致認證失敗。
+    // 請將您的 Firebase 專案配置物件貼到下方
+    // 範例：const YOUR_FIREBASE_CONFIG = { apiKey: "...", authDomain: "...", ... };
     // -------------------------------------------------------------------------
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const YOUR_FIREBASE_CONFIG = {
+        apiKey: "AIzaSyACJre2XVZ3KI3jAfsewGjFmhSV219ztO0",
+        authDomain: "th-re-m.firebaseapp.com",
+        projectId: "th-re-m",
+        storageBucket: "th-re-m.firebasestorage.app",
+        messagingSenderId: "831215013774",
+        appId: "1:831215013774:web:1a11969fd77e8db6c21edf",
+        measurementId: "G-NFD3S3V69L"
+    };
 
+    // 優先使用 Canvas 環境提供的配置，若無則使用手動輸入的配置
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : YOUR_FIREBASE_CONFIG;
+    
     // 請在下方填入您的 HiveMQ Cloud 連線資訊
     const HIVE_MQ_HOST = '2031fa74565b431694eda7e9d0d88f90.s1.eu.hivemq.cloud'; // e.g. 'a12b34c56d78.s1.eu.hivemq.cloud'
     const HIVE_MQ_PORT = 8884; // SSL/TLS connection
@@ -354,7 +365,7 @@
      */
     const initApp = async () => {
         try {
-            if (!firebaseConfig || !firebaseConfig.apiKey || !firebaseConfig.projectId) {
+            if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.appId) {
                 console.error("Firebase 配置資訊缺失。");
                 displayError("Firebase 配置資訊缺失。請確認已將您的專案配置填入程式碼中。");
                 return;
