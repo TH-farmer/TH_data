@@ -71,15 +71,20 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // 全域變數由 Canvas 環境提供
+    // -------------------------------------------------------------------------
+    // 全域變數和 Firebase 配置
+    // -------------------------------------------------------------------------
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
     const firebaseConfigString = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
 
-    // -------------------------------------------------------------------------
-    // Firebase 專案配置資訊。
-    // 這個物件包含了你的 Firebase 專案設定，用於初始化應用程式。
-    // -------------------------------------------------------------------------
+    let app, auth, db, userId;
+    let client = null;
+    let temperatureChart = null;
+    let humidityChart = null;
+    let isInitialized = false;
+
+    // 備用 Firebase 專案配置資訊 (在 Canvas 環境中通常不會用到)
     const YOUR_FIREBASE_CONFIG = {
         apiKey: "AIzaSyACJre2XVZ3KI3jAfsewGjFmhSV219ztO0",
         authDomain: "th-re-m.firebaseapp.com",
@@ -90,28 +95,12 @@
         measurementId: "G-NFD3S3V69L"
     };
 
-    let firebaseConfig;
-    // 優先使用 Canvas 環境提供的配置，否則使用備用配置。
-    if (firebaseConfigString) {
-        try {
-            firebaseConfig = JSON.parse(firebaseConfigString);
-        } catch (e) {
-            console.error("❌ 無法解析 Firebase 配置字串:", e);
-            firebaseConfig = YOUR_FIREBASE_CONFIG;
-        }
-    } else {
-        firebaseConfig = YOUR_FIREBASE_CONFIG;
-    }
-
-    // -------------------------------------------------------------------------
-    // HiveMQ Cloud 連線資訊。
-    // 請確認你的使用者名稱、密碼和主題都是正確的。
-    // -------------------------------------------------------------------------
-    const HIVE_MQ_HOST = '2031fa74565b431694eda7e9d0d88f90.s1.eu.hivemq.cloud'; // e.g. 'a12b34c56d78.s1.eu.hivemq.cloud'
-    const HIVE_MQ_PORT = 8884; // SSL/TLS connection
-    const HIVE_MQ_TOPIC = 'TH_data'; // Your ESP8266's topic
-    const HIVE_MQ_USERNAME = 'TH_farmer'; // Your HiveMQ username
-    const HIVE_MQ_PASSWORD = 'Th123456789'; // Your HiveMQ password
+    // HiveMQ Cloud 連線資訊
+    const HIVE_MQ_HOST = '2031fa74565b431694eda7e9d0d88f90.s1.eu.hivemq.cloud';
+    const HIVE_MQ_PORT = 8884;
+    const HIVE_MQ_TOPIC = 'TH_data';
+    const HIVE_MQ_USERNAME = 'TH_farmer';
+    const HIVE_MQ_PASSWORD = 'Th123456789';
 
     const MQTT_STATUS = {
         CONNECTING: '正在連線...',
@@ -120,46 +109,29 @@
         ERROR: '連線錯誤',
     };
 
-    // Firebase and Firestore instances
-    let app, auth, db, userId;
-
-    let client = null;
-    let temperatureChart = null;
-    let humidityChart = null;
-
     /**
-     * Updates the status display on the dashboard.
-     * @param {string} status The status to display (e.g., 'Connected').
+     * 更新儀表板上的狀態顯示。
+     * @param {string} status 要顯示的狀態。
      */
     const updateStatus = (status) => {
         const statusText = document.getElementById('mqtt-status-text');
         const statusDot = document.getElementById('mqtt-status-dot');
         statusText.textContent = status;
         statusDot.className = 'block w-3 h-3 rounded-full animate-pulse';
-
-        switch (status) {
-            case MQTT_STATUS.CONNECTED:
-                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-green-100 text-green-800';
-                statusDot.classList.add('bg-green-500');
-                break;
-            case MQTT_STATUS.CONNECTING:
-                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-yellow-100 text-yellow-800';
-                statusDot.classList.add('bg-yellow-500');
-                break;
-            case MQTT_STATUS.DISCONNECTED:
-                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-red-100 text-red-800';
-                statusDot.classList.add('bg-red-500');
-                break;
-            case MQTT_STATUS.ERROR:
-                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-red-100 text-red-800';
-                statusDot.classList.add('bg-red-500');
-                break;
-        }
+        const colorMap = {
+            [MQTT_STATUS.CONNECTED]: 'green',
+            [MQTT_STATUS.CONNECTING]: 'yellow',
+            [MQTT_STATUS.DISCONNECTED]: 'red',
+            [MQTT_STATUS.ERROR]: 'red',
+        };
+        const color = colorMap[status] || 'red';
+        statusText.className = `px-4 py-2 rounded-full text-sm font-semibold bg-${color}-100 text-${color}-800`;
+        statusDot.classList.add(`bg-${color}-500`);
     };
 
     /**
-     * Displays an error message on the dashboard.
-     * @param {string} message The error message to display.
+     * 在儀表板上顯示錯誤訊息。
+     * @param {string} message 要顯示的錯誤訊息。
      */
     const displayError = (message) => {
         const errorContainer = document.getElementById('error-message');
@@ -169,7 +141,7 @@
     };
 
     /**
-     * Initializes the Chart.js instances for temperature and humidity.
+     * 初始化 Chart.js 圖表。
      */
     const initCharts = () => {
         const tempCtx = document.getElementById('temperatureChart').getContext('2d');
@@ -178,81 +150,74 @@
         if (temperatureChart) { temperatureChart.destroy(); }
         if (humidityChart) { humidityChart.destroy(); }
         
-        // Initialize temperature chart
         temperatureChart = new Chart(tempCtx, {
             type: 'line',
-            data: {
-                labels: [],
-                datasets: [
-                    {
-                        label: '溫度 (°C)',
-                        data: [],
-                        borderColor: 'rgb(255, 99, 132)',
-                        backgroundColor: 'rgba(255, 99, 132, 0.5)',
-                        tension: 0.1,
-                    }
-                ],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    title: { display: true, text: '即時溫度趨勢' }
-                },
-                scales: {
-                    x: {
-                        title: { display: true, text: '時間' }
-                    },
-                    y: {
-                        title: { display: true, text: '溫度 (°C)' }
-                    }
-                }
-            }
+            data: { labels: [], datasets: [{ label: '溫度 (°C)', data: [], borderColor: 'rgb(255, 99, 132)', backgroundColor: 'rgba(255, 99, 132, 0.5)', tension: 0.1 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '即時溫度趨勢' } }, scales: { x: { title: { display: true, text: '時間' } }, y: { title: { display: true, text: '溫度 (°C)' } } } }
         });
-
-        // Initialize humidity chart
         humidityChart = new Chart(humCtx, {
             type: 'line',
-            data: {
-                labels: [],
-                datasets: [
-                    {
-                        label: '濕度 (%)',
-                        data: [],
-                        borderColor: 'rgb(53, 162, 235)',
-                        backgroundColor: 'rgba(53, 162, 235, 0.5)',
-                        tension: 0.1,
-                    }
-                ],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    title: { display: true, text: '即時濕度趨勢' }
-                },
-                scales: {
-                    x: {
-                        title: { display: true, text: '時間' }
-                    },
-                    y: {
-                        title: { display: true, text: '濕度 (%)' }
-                    }
-                }
-            }
+            data: { labels: [], datasets: [{ label: '濕度 (%)', data: [], borderColor: 'rgb(53, 162, 235)', backgroundColor: 'rgba(53, 162, 235, 0.5)', tension: 0.1 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '即時濕度趨勢' } }, scales: { x: { title: { display: true, text: '時間' } }, y: { title: { display: true, text: '濕度 (%)' } } } }
         });
     };
 
     /**
-     * Connects to MQTT and sets up event listeners.
+     * 處理 MQTT 接收到的數據並更新儀表板和 Firestore。
+     * @param {string} messageString 接收到的 MQTT 訊息。
+     */
+    const handleMqttMessage = async (messageString) => {
+        let temp, hum;
+        try {
+            const data = JSON.parse(messageString);
+            if (data.hasOwnProperty('temperature') && data.hasOwnProperty('humidity')) {
+                temp = data.temperature;
+                hum = data.humidity;
+            } else if (data.hasOwnProperty('temp') && data.hasOwnProperty('hum')) {
+                temp = data.temp;
+                hum = data.hum;
+            } else {
+                throw new Error('數據格式不正確，缺少 temperature/temp 或 humidity/hum 屬性。');
+            }
+        } catch (e) {
+            const parts = messageString.split(',').map(part => parseFloat(part.trim()));
+            if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                temp = parts[0];
+                hum = parts[1];
+            } else {
+                console.error('❌ 無法解析數據:', messageString);
+                displayError(`無法解析數據: ${messageString}`);
+                return;
+            }
+        }
+
+        if (typeof temp === 'number' && typeof hum === 'number' && !isNaN(temp) && !isNaN(hum)) {
+            document.getElementById('temperature-display').textContent = temp.toFixed(1);
+            document.getElementById('humidity-display').textContent = hum.toFixed(1);
+            
+            try {
+                await addDoc(collection(db, `artifacts/${appId}/public/data/th_readings`), {
+                    temperature: temp,
+                    humidity: hum,
+                    timestamp: serverTimestamp()
+                });
+                console.log("✅ 數據已成功寫入 Firestore。");
+            } catch (firestoreError) {
+                console.error("❌ 寫入 Firestore 失敗:", firestoreError);
+            }
+        } else {
+            console.error('❌ 無效的溫濕度數據:', { temp, hum });
+            displayError('無效的溫濕度數據，請檢查發送格式。');
+        }
+    };
+
+    /**
+     * 連接到 MQTT 伺服器並設置監聽器。
      */
     const connectToMqtt = () => {
         updateStatus(MQTT_STATUS.CONNECTING);
         try {
             const connectUrl = `wss://${HIVE_MQ_HOST}:${HIVE_MQ_PORT}/mqtt`;
-            console.log(`嘗試連接 MQTT 伺服器... URL: ${connectUrl}`);
             client = mqtt.connect(connectUrl, {
                 clientId: 'mqttjs_' + Math.random().toString(16).substr(2, 8),
                 username: HIVE_MQ_USERNAME,
@@ -273,176 +238,105 @@
                 });
             });
 
-            client.on('message', async (topic, message) => {
-                let temp, hum;
-                try {
-                    // Try to parse the message as JSON
-                    const data = JSON.parse(message.toString());
-                    console.log('收到 JSON 數據:', data);
-                    
-                    // Check for possible keys: temperature, humidity, temp, hum
-                    if (data.hasOwnProperty('temperature') && data.hasOwnProperty('humidity')) {
-                        temp = data.temperature;
-                        hum = data.humidity;
-                    } else if (data.hasOwnProperty('temp') && data.hasOwnProperty('hum')) {
-                        temp = data.temp;
-                        hum = data.hum;
-                    } else {
-                        // If JSON format is incorrect, try other parsing methods
-                        throw new Error('數據格式不正確，缺少 temperature/temp 或 humidity/hum 屬性。');
-                    }
-                } catch (e) {
-                    console.warn('解析 JSON 數據失敗，嘗試解析為單一字串。');
-                    const messageString = message.toString();
-                    console.log('收到字串數據:', messageString);
-                    // Try to parse as a comma-separated string
-                    const parts = messageString.split(',').map(part => parseFloat(part.trim()));
-                    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-                        temp = parts[0];
-                        hum = parts[1];
-                    } else {
-                        console.error('無法解析數據:', messageString);
-                        displayError(`無法解析數據: ${messageString}`);
-                        return;
-                    }
-                }
-
-                // Ensure data is valid before processing
-                if (typeof temp === 'number' && typeof hum === 'number' && !isNaN(temp) && !isNaN(hum)) {
-                    const temperatureDisplay = document.getElementById('temperature-display');
-                    const humidityDisplay = document.getElementById('humidity-display');
-                    
-                    temperatureDisplay.textContent = temp.toFixed(1);
-                    humidityDisplay.textContent = hum.toFixed(1);
-
-                    // Write new data to Firestore
-                    console.log("正在嘗試寫入 Firestore...");
-                    try {
-                        await addDoc(collection(db, `artifacts/${appId}/public/data/th_readings`), {
-                            temperature: temp,
-                            humidity: hum,
-                            timestamp: serverTimestamp() // Use server timestamp to ensure correct time
-                        });
-                        console.log("✅ 數據已成功寫入 Firestore。");
-                    } catch (firestoreError) {
-                        console.error("❌ 寫入 Firestore 失敗:", firestoreError);
-                        // Do not display this error to the user as it might be due to quota exceeded
-                    }
-
-                } else {
-                    console.error('❌ 無效的溫濕度數據:', { temp, hum });
-                    displayError('無效的溫濕度數據，請檢查發送格式。');
-                }
-            });
-
+            client.on('message', (topic, message) => handleMqttMessage(message.toString()));
             client.on('error', (err) => {
                 console.error('❌ MQTT 連線錯誤:', err);
                 displayError(`連線錯誤: ${err.message}`);
                 updateStatus(MQTT_STATUS.ERROR);
-                if (client) {
-                    client.end();
-                }
+                client.end();
             });
-
             client.on('close', () => {
                 console.log('連線已關閉');
                 updateStatus(MQTT_STATUS.DISCONNECTED);
             });
-
         } catch (e) {
             console.error("❌ 連線失敗:", e);
             displayError(`連線失敗: ${e.message}`);
             updateStatus(MQTT_STATUS.ERROR);
         }
     };
-    
+
     /**
-     * Main initialization function that handles Firebase and Firestore.
+     * 監聽 Firestore 的即時數據。
+     */
+    const listenToFirestore = () => {
+        const thReadingsRef = collection(db, `artifacts/${appId}/public/data/th_readings`);
+        const q = query(thReadingsRef, limit(50));
+
+        onSnapshot(q, (querySnapshot) => {
+            const readings = [];
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                if (data.timestamp && data.timestamp.toDate) {
+                    readings.push(data);
+                }
+            });
+            readings.sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
+            
+            if (readings.length > 0) {
+                const labels = readings.map(d => d.timestamp.toDate().toLocaleTimeString());
+                const temperatures = readings.map(d => d.temperature);
+                const humidities = readings.map(d => d.humidity);
+
+                temperatureChart.data.labels = labels;
+                temperatureChart.data.datasets[0].data = temperatures;
+                temperatureChart.update();
+
+                humidityChart.data.labels = labels;
+                humidityChart.data.datasets[0].data = humidities;
+                humidityChart.update();
+            }
+            console.log("✅ 從 Firestore 收到即時更新 (已排序):", readings);
+        }, (error) => {
+            console.error("❌ Firestore 監聽失敗:", error);
+            displayError(`Firestore 監聽失敗: ${error.message}`);
+        });
+    };
+
+    /**
+     * 主應用程式初始化函式。
      */
     const initApp = async () => {
-        try {
-            // Check for Firebase config validity
-            if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.appId) {
-                const errorMessage = "Firebase 配置資訊缺失。請確認已將您的專案配置填入程式碼中。";
-                console.error(`❌ ${errorMessage}`);
-                displayError(errorMessage);
-                return;
+        if (isInitialized) return;
+        isInitialized = true;
+        
+        let firebaseConfig;
+        if (firebaseConfigString) {
+            try {
+                firebaseConfig = JSON.parse(firebaseConfigString);
+                console.log("✅ 使用 Canvas 環境提供的 Firebase 配置。");
+            } catch (e) {
+                console.warn("⚠️ 無法解析 Canvas Firebase 配置，使用備用配置。");
+                firebaseConfig = YOUR_FIREBASE_CONFIG;
             }
-
-            // Initialize Firebase
+        } else {
+            firebaseConfig = YOUR_FIREBASE_CONFIG;
+            console.warn("⚠️ 缺少 Canvas Firebase 配置，使用備用配置。");
+        }
+        
+        try {
             app = initializeApp(firebaseConfig);
             auth = getAuth(app);
             db = getFirestore(app);
 
-            // Sign in using the provided custom token or anonymously
             if (initialAuthToken) {
                 try {
                     await signInWithCustomToken(auth, initialAuthToken);
+                    console.log("✅ 成功使用自訂令牌登入。");
                 } catch (error) {
-                    console.warn("Custom token sign-in failed. Falling back to anonymous sign-in.", error);
+                    console.warn("⚠️ 自訂令牌登入失敗，正在嘗試匿名登入...", error);
                     await signInAnonymously(auth);
                 }
             } else {
                 await signInAnonymously(auth);
+                console.log("✅ 成功使用匿名登入。");
             }
-
-            userId = auth.currentUser?.uid || crypto.randomUUID();
-            console.log("✅ Firebase 已成功初始化並登入。User ID:", userId);
-
-            // Display the user ID on the dashboard
-            const userIdDisplay = document.getElementById('user-id-display');
-            if (userIdDisplay) {
-                userIdDisplay.textContent = `使用者 ID: ${userId}`;
-            }
-
-            // Listen to Firestore for real-time updates
-            const thReadingsRef = collection(db, `artifacts/${appId}/public/data/th_readings`);
             
-            // 修正：移除 orderBy('timestamp', 'asc')，避免 null timestamp 導致的繪圖問題。
-            // 我們改為在接收到資料後，在 JavaScript 端手動排序。
-            const q = query(thReadingsRef, limit(50));
-
-            onSnapshot(q, (querySnapshot) => {
-                const readings = [];
-                querySnapshot.forEach((doc) => {
-                    const data = doc.data();
-                    // 過濾掉還沒有有效時間戳記的文檔，以確保 Chart.js 收到有效數據。
-                    if (data.timestamp && data.timestamp.toDate) {
-                        readings.push(data);
-                    }
-                });
-
-                // 在客戶端手動按時間戳記排序數據。
-                readings.sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
-                
-                // 檢查是否有數據再更新圖表，這可以避免圖表被空的快照清除。
-                if (readings.length > 0) {
-                     // 清空並填充新數據
-                    const labels = readings.map(d => d.timestamp.toDate().toLocaleTimeString());
-                    const temperatures = readings.map(d => d.temperature);
-                    const humidities = readings.map(d => d.humidity);
-
-                    // 直接將新數據賦予給圖表的資料集
-                    temperatureChart.data.labels = labels;
-                    temperatureChart.data.datasets[0].data = temperatures;
-                    temperatureChart.update();
-
-                    humidityChart.data.labels = labels;
-                    humidityChart.data.datasets[0].data = humidities;
-                    humidityChart.update();
-                }
-                
-                console.log("✅ 從 Firestore 收到即時更新 (已排序):", readings);
-            }, (error) => {
-                console.error("❌ Firestore 監聽失敗:", error);
-                displayError(`Firestore 監聽失敗: ${error.message}`);
-            });
-
-            // Connect to MQTT
-            if (HIVE_MQ_HOST === 'YOUR_HIVE_MQ_HOST' || HIVE_MQ_USERNAME === 'YOUR_USERNAME' || HIVE_MQ_PASSWORD === 'YOUR_PASSWORD') {
-                displayError('請在程式碼中填入你的 HiveMQ 連線資訊。');
-                return;
-            }
+            userId = auth.currentUser?.uid || crypto.randomUUID();
+            document.getElementById('user-id-display').textContent = `使用者 ID: ${userId}`;
+            console.log("✅ Firebase 已成功初始化。");
+            
+            listenToFirestore();
             connectToMqtt();
         } catch (e) {
             console.error("❌ 應用程式初始化失敗:", e);
@@ -450,8 +344,7 @@
         }
     };
 
-    // Listen for the DOMContentLoaded event to ensure the DOM is loaded before execution
-    document.addEventListener('DOMContentLoaded', (event) => {
+    document.addEventListener('DOMContentLoaded', () => {
         initCharts();
         initApp();
     });
