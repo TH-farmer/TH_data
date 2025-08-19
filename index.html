@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT 數據儀表板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 sm:p-8 flex items-center justify-center">
+
+<div class="w-full max-w-5xl bg-white rounded-lg shadow-xl p-6 sm:p-8">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+        <h1 class="text-2xl sm:text-3xl font-bold text-gray-800 mb-2 sm:mb-0">IoT 數據儀表板</h1>
+        <div id="status-container" class="flex items-center space-x-2">
+            <span id="mqtt-status-dot" class="block w-3 h-3 rounded-full animate-pulse bg-red-500"></span>
+            <span id="mqtt-status-text" class="px-4 py-2 rounded-full text-sm font-semibold bg-red-100 text-red-800">
+                正在連線...
+            </span>
+        </div>
+    </div>
+
+    <div id="error-message" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+        <strong class="font-bold">連線失敗：</strong>
+        <span class="block sm:inline" id="error-text"></span>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-8">
+        <div class="bg-blue-50 p-6 rounded-lg shadow-md flex-1">
+            <h2 class="text-xl font-semibold text-blue-800 mb-2">溫度</h2>
+            <p id="temperature-display" class="text-4xl sm:text-5xl font-extrabold text-blue-600">---</p>
+            <span class="text-gray-500 mt-1">°C</span>
+        </div>
+        <div class="bg-green-50 p-6 rounded-lg shadow-md flex-1">
+            <h2 class="text-xl font-semibold text-green-800 mb-2">濕度</h2>
+            <p id="humidity-display" class="text-4xl sm:text-5xl font-extrabold text-green-600">---</p>
+            <span class="text-gray-500 mt-1">%</span>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <canvas id="temperatureChart"></canvas>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <canvas id="humidityChart"></canvas>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // 請在下方填入你的 HiveMQ Cloud 連線資訊
+    const HIVE_MQ_HOST = '2031fa74565b431694eda7e9d0d88f90.s1.eu.hivemq.cloud'; // 例如 'a12b34c56d78.s1.eu.hivemq.cloud'
+    const HIVE_MQ_PORT = 8884; // SSL/TLS 連線
+    const HIVE_MQ_TOPIC = 'TH_data'; // 你的 ESP8266 發佈數據的主題
+    const HIVE_MQ_USERNAME = 'TH_farmer'; // 你的 HiveMQ 使用者名稱
+    const HIVE_MQ_PASSWORD = 'Th123456789'; // 你的 HiveMQ 密碼
+
+    const MQTT_STATUS = {
+        CONNECTING: '正在連線...',
+        CONNECTED: '已連線',
+        DISCONNECTED: '已斷線',
+        ERROR: '連線錯誤',
+    };
+
+    let client = null;
+    let temperatureChart = null;
+    let humidityChart = null;
+
+    let dataHistory = {
+        labels: [],
+        temperature: [],
+        humidity: []
+    };
+
+    const updateStatus = (status) => {
+        const statusText = document.getElementById('mqtt-status-text');
+        const statusDot = document.getElementById('mqtt-status-dot');
+        const statusContainer = document.getElementById('status-container');
+        statusText.textContent = status;
+        statusDot.className = 'block w-3 h-3 rounded-full animate-pulse';
+
+        switch (status) {
+            case MQTT_STATUS.CONNECTED:
+                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-green-100 text-green-800';
+                statusDot.classList.add('bg-green-500');
+                break;
+            case MQTT_STATUS.CONNECTING:
+                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-yellow-100 text-yellow-800';
+                statusDot.classList.add('bg-yellow-500');
+                break;
+            case MQTT_STATUS.DISCONNECTED:
+                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-red-100 text-red-800';
+                statusDot.classList.add('bg-red-500');
+                break;
+            case MQTT_STATUS.ERROR:
+                statusText.className = 'px-4 py-2 rounded-full text-sm font-semibold bg-red-100 text-red-800';
+                statusDot.classList.add('bg-red-500');
+                break;
+        }
+    };
+
+    const displayError = (message) => {
+        const errorContainer = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+        errorText.textContent = message;
+        errorContainer.classList.remove('hidden');
+    };
+
+    const initCharts = () => {
+        const tempCtx = document.getElementById('temperatureChart').getContext('2d');
+        const humCtx = document.getElementById('humidityChart').getContext('2d');
+
+        if (temperatureChart) { temperatureChart.destroy(); }
+        if (humidityChart) { humidityChart.destroy(); }
+        
+        // 初始化溫度圖表
+        temperatureChart = new Chart(tempCtx, {
+            type: 'line',
+            data: {
+                labels: dataHistory.labels,
+                datasets: [
+                    {
+                        label: '溫度 (°C)',
+                        data: dataHistory.temperature,
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                        tension: 0.1,
+                    }
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    title: { display: true, text: '即時溫度趨勢' }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: '時間' }
+                    },
+                    y: {
+                        title: { display: true, text: '溫度 (°C)' }
+                    }
+                }
+            }
+        });
+
+        // 初始化濕度圖表
+        humidityChart = new Chart(humCtx, {
+            type: 'line',
+            data: {
+                labels: dataHistory.labels,
+                datasets: [
+                    {
+                        label: '濕度 (%)',
+                        data: dataHistory.humidity,
+                        borderColor: 'rgb(53, 162, 235)',
+                        backgroundColor: 'rgba(53, 162, 235, 0.5)',
+                        tension: 0.1,
+                    }
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    title: { display: true, text: '即時濕度趨勢' }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: '時間' }
+                    },
+                    y: {
+                        title: { display: true, text: '濕度 (%)' }
+                    }
+                }
+            }
+        });
+    };
+
+    const updateChartData = (temperature, humidity) => {
+        const currentTime = new Date().toLocaleTimeString();
+        
+        // 更新數據歷史記錄
+        dataHistory.labels.push(currentTime);
+        dataHistory.temperature.push(temperature);
+        dataHistory.humidity.push(humidity);
+
+        // 保持圖表數據量在一個可管理範圍內，例如最多 20 個點
+        if (dataHistory.labels.length > 20) {
+            dataHistory.labels.shift();
+            dataHistory.temperature.shift();
+            dataHistory.humidity.shift();
+        }
+
+        // 更新兩張圖表
+        temperatureChart.update();
+        humidityChart.update();
+    };
+
+    const connectToMqtt = () => {
+        if (HIVE_MQ_HOST === 'YOUR_HIVE_MQ_HOST' || HIVE_MQ_USERNAME === 'YOUR_USERNAME' || HIVE_MQ_PASSWORD === 'YOUR_PASSWORD') {
+            displayError('請在程式碼中填入你的 HiveMQ 連線資訊。');
+            return;
+        }
+        
+        updateStatus(MQTT_STATUS.CONNECTING);
+
+        try {
+            const connectUrl = `wss://${HIVE_MQ_HOST}:${HIVE_MQ_PORT}/mqtt`;
+            console.log(`嘗試連接 MQTT 伺服器... URL: ${connectUrl}`);
+            client = mqtt.connect(connectUrl, {
+                clientId: 'mqttjs_' + Math.random().toString(16).substr(2, 8),
+                username: HIVE_MQ_USERNAME,
+                password: HIVE_MQ_PASSWORD,
+            });
+
+            client.on('connect', () => {
+                console.log('已成功連接 MQTT 伺服器');
+                updateStatus(MQTT_STATUS.CONNECTED);
+                client.subscribe(HIVE_MQ_TOPIC, (err) => {
+                    if (err) {
+                        console.error('訂閱失敗:', err);
+                        displayError(`訂閱主題失敗: ${err.message}`);
+                        updateStatus(MQTT_STATUS.ERROR);
+                    } else {
+                        console.log(`成功訂閱主題: ${HIVE_MQ_TOPIC}`);
+                    }
+                });
+            });
+
+            client.on('message', (topic, message) => {
+                let temp, hum;
+                try {
+                    // 嘗試解析為 JSON
+                    const data = JSON.parse(message.toString());
+                    console.log('收到 JSON 數據:', data);
+                    
+                    // 檢查可能的鍵名: temperature, humidity, temp, hum
+                    if (data.hasOwnProperty('temperature') && data.hasOwnProperty('humidity')) {
+                        temp = data.temperature;
+                        hum = data.humidity;
+                    } else if (data.hasOwnProperty('temp') && data.hasOwnProperty('hum')) {
+                        temp = data.temp;
+                        hum = data.hum;
+                    } else {
+                        // 如果 JSON 格式不正確，則嘗試其他解析方式
+                        throw new Error('數據格式不正確，缺少 temperature/temp 或 humidity/hum 屬性。');
+                    }
+                } catch (e) {
+                    console.warn('解析 JSON 數據失敗，嘗試解析為單一字串。');
+                    const messageString = message.toString();
+                    console.log('收到字串數據:', messageString);
+                    // 嘗試解析為逗號分隔的字串
+                    const parts = messageString.split(',').map(part => parseFloat(part.trim()));
+                    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                        temp = parts[0];
+                        hum = parts[1];
+                    } else {
+                        console.error('無法解析數據:', messageString);
+                        displayError(`無法解析數據: ${messageString}`);
+                        return;
+                    }
+                }
+
+                // 確保數據有效
+                if (typeof temp === 'number' && typeof hum === 'number' && !isNaN(temp) && !isNaN(hum)) {
+                    const temperatureDisplay = document.getElementById('temperature-display');
+                    const humidityDisplay = document.getElementById('humidity-display');
+                    
+                    temperatureDisplay.textContent = temp.toFixed(1);
+                    humidityDisplay.textContent = hum.toFixed(1);
+                    
+                    updateChartData(temp, hum);
+                } else {
+                    console.error('無效的溫濕度數據:', { temp, hum });
+                    displayError('無效的溫濕度數據，請檢查發送格式。');
+                }
+            });
+
+            client.on('error', (err) => {
+                console.error('MQTT 連線錯誤:', err);
+                displayError(`連線錯誤: ${err.message}`);
+                updateStatus(MQTT_STATUS.ERROR);
+                if (client) {
+                    client.end();
+                }
+            });
+
+            client.on('close', () => {
+                console.log('連線已關閉');
+                updateStatus(MQTT_STATUS.DISCONNECTED);
+            });
+
+        } catch (e) {
+            console.error('連線失敗:', e);
+            displayError(`連線失敗: ${e.message}`);
+            updateStatus(MQTT_STATUS.ERROR);
+        }
+    };
+    
+    // 監聽 DOMContentLoaded 事件確保在 DOM 載入後執行
+    document.addEventListener('DOMContentLoaded', (event) => {
+        initCharts();
+        connectToMqtt();
+    });
+</script>
+</body>
+</html>
