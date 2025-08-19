@@ -245,6 +245,13 @@
         
         // Step 1: Initialize Firebase and authenticate
         try {
+            if (!firebaseConfig.apiKey) {
+                // If the API key is missing, it means the platform hasn't provided it.
+                // Log this for debugging but don't stop the app as it will be injected later.
+                console.warn("Firebase config is missing API key. This is expected during initial load. The key will be provided dynamically.");
+                return;
+            }
+
             app = initializeApp(firebaseConfig);
             auth = getAuth(app);
             db = getFirestore(app);
