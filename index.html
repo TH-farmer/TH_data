@@ -64,7 +64,7 @@
     // Firebase SDK imports
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     // 全域變數由 Canvas 環境提供
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -110,12 +110,6 @@
     let client = null;
     let temperatureChart = null;
     let humidityChart = null;
-
-    let dataHistory = {
-        labels: [],
-        temperature: [],
-        humidity: []
-    };
 
     /**
      * Updates the status display on the dashboard.
@@ -172,11 +166,11 @@
         temperatureChart = new Chart(tempCtx, {
             type: 'line',
             data: {
-                labels: dataHistory.labels,
+                labels: [],
                 datasets: [
                     {
                         label: '溫度 (°C)',
-                        data: dataHistory.temperature,
+                        data: [],
                         borderColor: 'rgb(255, 99, 132)',
                         backgroundColor: 'rgba(255, 99, 132, 0.5)',
                         tension: 0.1,
@@ -205,11 +199,11 @@
         humidityChart = new Chart(humCtx, {
             type: 'line',
             data: {
-                labels: dataHistory.labels,
+                labels: [],
                 datasets: [
                     {
                         label: '濕度 (%)',
-                        data: dataHistory.humidity,
+                        data: [],
                         borderColor: 'rgb(53, 162, 235)',
                         backgroundColor: 'rgba(53, 162, 235, 0.5)',
                         tension: 0.1,
@@ -233,29 +227,6 @@
                 }
             }
         });
-    };
-
-    /**
-     * Updates the chart data based on the latest Firestore readings.
-     * @param {Array<Object>} data An array of temperature and humidity readings.
-     */
-    const updateChartData = (data) => {
-        // 清空舊數據
-        dataHistory.labels = [];
-        dataHistory.temperature = [];
-        dataHistory.humidity = [];
-
-        // 填充新數據
-        data.forEach(d => {
-            const timestamp = d.timestamp?.toDate ? d.timestamp.toDate() : new Date();
-            dataHistory.labels.push(timestamp.toLocaleTimeString());
-            dataHistory.temperature.push(d.temperature);
-            dataHistory.humidity.push(d.humidity);
-        });
-
-        // 更新圖表
-        temperatureChart.update();
-        humidityChart.update();
     };
 
     /**
@@ -401,15 +372,42 @@
 
             // Listen to Firestore for real-time updates
             const thReadingsRef = collection(db, `artifacts/${appId}/public/data/th_readings`);
-            const q = query(thReadingsRef, orderBy('timestamp', 'asc'), limit(50));
+            
+            // 修正：移除 orderBy('timestamp', 'asc')，避免 null timestamp 導致的繪圖問題。
+            // 我們改為在接收到資料後，在 JavaScript 端手動排序。
+            const q = query(thReadingsRef, limit(50));
 
             onSnapshot(q, (querySnapshot) => {
                 const readings = [];
                 querySnapshot.forEach((doc) => {
-                    readings.push(doc.data());
+                    const data = doc.data();
+                    // 過濾掉還沒有有效時間戳記的文檔，以確保 Chart.js 收到有效數據。
+                    if (data.timestamp && data.timestamp.toDate) {
+                        readings.push(data);
+                    }
                 });
-                console.log("從 Firestore 收到更新:", readings);
-                updateChartData(readings);
+
+                // 在客戶端手動按時間戳記排序數據。
+                readings.sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
+                
+                // 檢查是否有數據再更新圖表，這可以避免圖表被空的快照清除。
+                if (readings.length > 0) {
+                     // 清空並填充新數據
+                    const labels = readings.map(d => d.timestamp.toDate().toLocaleTimeString());
+                    const temperatures = readings.map(d => d.temperature);
+                    const humidities = readings.map(d => d.humidity);
+
+                    // 直接將新數據賦予給圖表的資料集
+                    temperatureChart.data.labels = labels;
+                    temperatureChart.data.datasets[0].data = temperatures;
+                    temperatureChart.update();
+
+                    humidityChart.data.labels = labels;
+                    humidityChart.data.datasets[0].data = humidities;
+                    humidityChart.update();
+                }
+                
+                console.log("從 Firestore 收到更新 (已排序):", readings);
             }, (error) => {
                 console.error("Firestore 監聽失敗:", error);
                 displayError(`Firestore 監聽失敗: ${error.message}`);
