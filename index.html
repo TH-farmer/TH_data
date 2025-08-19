@@ -66,15 +66,20 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // Global variables provided by the Canvas environment
+    // 全域變數由 Canvas 環境提供
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-    // Please fill in your HiveMQ Cloud connection information below
+    // -------------------------------------------------------------------------
+    // 從 Canvas 環境取得 Firebase 專案配置資訊
+    // 請勿在此處手動輸入您的配置，否則將導致認證失敗。
+    // -------------------------------------------------------------------------
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+    // 請在下方填入您的 HiveMQ Cloud 連線資訊
     const HIVE_MQ_HOST = '2031fa74565b431694eda7e9d0d88f90.s1.eu.hivemq.cloud'; // e.g. 'a12b34c56d78.s1.eu.hivemq.cloud'
     const HIVE_MQ_PORT = 8884; // SSL/TLS connection
-    const HIVE_MQ_TOPIC = 'TH_data'; // The topic your ESP8266 publishes data to
+    const HIVE_MQ_TOPIC = 'TH_data'; // Your ESP8266's topic
     const HIVE_MQ_USERNAME = 'TH_farmer'; // Your HiveMQ username
     const HIVE_MQ_PASSWORD = 'Th123456789'; // Your HiveMQ password
 
@@ -235,63 +240,10 @@
     };
 
     /**
-     * Initializes Firebase, connects to Firestore, and sets up MQTT client.
+     * Connects to MQTT and sets up event listeners.
      */
-    const initializeAndConnect = async () => {
-        if (HIVE_MQ_HOST === 'YOUR_HIVE_MQ_HOST' || HIVE_MQ_USERNAME === 'YOUR_USERNAME' || HIVE_MQ_PASSWORD === 'YOUR_PASSWORD') {
-            displayError('請在程式碼中填入你的 HiveMQ 連線資訊。');
-            return;
-        }
-        
-        // Step 1: Initialize Firebase and authenticate
-        try {
-            if (!firebaseConfig.apiKey) {
-                // If the API key is missing, it means the platform hasn't provided it.
-                // Log this for debugging but don't stop the app as it will be injected later.
-                console.warn("Firebase config is missing API key. This is expected during initial load. The key will be provided dynamically.");
-                return;
-            }
-
-            app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-
-            // Sign in using the provided custom token or anonymously if not available
-            if (initialAuthToken) {
-                await signInWithCustomToken(auth, initialAuthToken);
-            } else {
-                await signInAnonymously(auth);
-            }
-            userId = auth.currentUser?.uid || crypto.randomUUID();
-            console.log("Firebase 已成功初始化並登入。");
-
-        } catch (e) {
-            console.error("Firebase 認證失敗:", e);
-            displayError(`Firebase 認證失敗: ${e.message}`);
-            return;
-        }
-
-        // Step 2: Listen to Firestore for real-time updates
-        // Use a public collection to store data accessible by all users
-        const thReadingsRef = collection(db, `artifacts/${appId}/public/data/th_readings`);
-        // Listen to the latest 20 documents, ordered by timestamp
-        const q = query(thReadingsRef, orderBy('timestamp', 'desc'), limit(20));
-
-        onSnapshot(q, (querySnapshot) => {
-            const readings = [];
-            querySnapshot.forEach((doc) => {
-                readings.push(doc.data());
-            });
-            console.log("從 Firestore 收到更新:", readings);
-            updateChartData(readings);
-        }, (error) => {
-            console.error("Firestore 監聽失敗:", error);
-            displayError(`Firestore 監聽失敗: ${error.message}`);
-        });
-
-        // Step 3: Connect to MQTT
+    const connectToMqtt = () => {
         updateStatus(MQTT_STATUS.CONNECTING);
-
         try {
             const connectUrl = `wss://${HIVE_MQ_HOST}:${HIVE_MQ_PORT}/mqtt`;
             console.log(`嘗試連接 MQTT 伺服器... URL: ${connectUrl}`);
@@ -397,10 +349,69 @@
         }
     };
     
+    /**
+     * Main initialization function that handles Firebase and Firestore.
+     */
+    const initApp = async () => {
+        try {
+            if (!firebaseConfig || !firebaseConfig.apiKey || !firebaseConfig.projectId) {
+                console.error("Firebase 配置資訊缺失。");
+                displayError("Firebase 配置資訊缺失。請確認已將您的專案配置填入程式碼中。");
+                return;
+            }
+
+            // Initialize Firebase
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            // Sign in using the provided custom token or anonymously
+            if (initialAuthToken) {
+                try {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } catch (error) {
+                    console.error("Custom token sign-in failed. Falling back to anonymous sign-in.", error);
+                    await signInAnonymously(auth);
+                }
+            } else {
+                await signInAnonymously(auth);
+            }
+
+            userId = auth.currentUser?.uid || crypto.randomUUID();
+            console.log("Firebase 已成功初始化並登入。User ID:", userId);
+
+            // Listen to Firestore for real-time updates
+            const thReadingsRef = collection(db, `artifacts/${appId}/public/data/th_readings`);
+            const q = query(thReadingsRef, orderBy('timestamp', 'desc'), limit(20));
+
+            onSnapshot(q, (querySnapshot) => {
+                const readings = [];
+                querySnapshot.forEach((doc) => {
+                    readings.push(doc.data());
+                });
+                console.log("從 Firestore 收到更新:", readings);
+                updateChartData(readings);
+            }, (error) => {
+                console.error("Firestore 監聽失敗:", error);
+                displayError(`Firestore 監聽失敗: ${error.message}`);
+            });
+
+            // Connect to MQTT
+            if (HIVE_MQ_HOST === 'YOUR_HIVE_MQ_HOST' || HIVE_MQ_USERNAME === 'YOUR_USERNAME' || HIVE_MQ_PASSWORD === 'YOUR_PASSWORD') {
+                displayError('請在程式碼中填入你的 HiveMQ 連線資訊。');
+                return;
+            }
+            connectToMqtt();
+        } catch (e) {
+            console.error("應用程式初始化失敗:", e);
+            displayError(`應用程式初始化失敗: ${e.message}`);
+        }
+    };
+
     // Listen for the DOMContentLoaded event to ensure the DOM is loaded before execution
     document.addEventListener('DOMContentLoaded', (event) => {
         initCharts();
-        initializeAndConnect();
+        initApp();
     });
 </script>
 </body>
