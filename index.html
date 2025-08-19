@@ -91,6 +91,7 @@
     };
 
     let firebaseConfig;
+    // 優先使用 Canvas 環境提供的配置，否則使用備用配置。
     if (firebaseConfigString) {
         try {
             firebaseConfig = JSON.parse(firebaseConfigString);
@@ -101,7 +102,7 @@
     } else {
         firebaseConfig = YOUR_FIREBASE_CONFIG;
     }
-    
+
     // -------------------------------------------------------------------------
     // HiveMQ Cloud 連線資訊。
     // 請確認你的使用者名稱、密碼和主題都是正確的。
