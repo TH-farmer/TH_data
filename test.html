@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase 數據寫入測試</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+<div class="w-full max-w-lg bg-white rounded-xl shadow-2xl p-8 text-center space-y-6">
+    <h1 class="text-3xl font-bold text-gray-800">Firebase 數據寫入測試</h1>
+    <p class="text-gray-600">
+        點擊下方的按鈕，嘗試將一筆測試數據寫入您的 Firebase Firestore。
+    </p>
+
+    <button id="send-data-btn" class="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-lg
+           hover:bg-blue-700 transition-colors duration-200 focus:outline-none focus:ring-2
+           focus:ring-blue-500 focus:ring-opacity-50">
+        發送測試數據
+    </button>
+
+    <div id="status-message" class="mt-4 px-4 py-3 rounded-lg text-sm font-medium hidden"></div>
+
+</div>
+
+<script type="module">
+    // Firebase SDK imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, addDoc, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // -------------------------------------------------------------------------
+    // 全域變數和 Firebase 配置
+    // 這些變數由 Canvas 環境自動提供，無須手動更改
+    // -------------------------------------------------------------------------
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    const firebaseConfigString = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+
+    let app, auth, db;
+    const statusMessage = document.getElementById('status-message');
+    const sendBtn = document.getElementById('send-data-btn');
+
+    // 備用 Firebase 專案配置資訊 (在 Canvas 環境中通常不會用到)
+    const YOUR_FIREBASE_CONFIG = {
+        apiKey: "AIzaSyACJre2XVZ3KI3jAfsewGjFmhSV219ztO0",
+        authDomain: "th-re-m.firebaseapp.com",
+        projectId: "th-re-m",
+        storageBucket: "th-re-m.firebasestorage.app",
+        messagingSenderId: "831215013774",
+        appId: "1:831215013774:web:1a11969fd77e8db6c21edf",
+        measurementId: "G-NFD3S3V69L"
+    };
+    
+    /**
+     * 更新狀態訊息顯示。
+     * @param {string} message 要顯示的訊息。
+     * @param {string} type 訊息類型 ('success' or 'error').
+     */
+    const updateStatus = (message, type) => {
+        statusMessage.textContent = message;
+        statusMessage.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800');
+        if (type === 'success') {
+            statusMessage.classList.add('bg-green-100', 'text-green-800');
+        } else {
+            statusMessage.classList.add('bg-red-100', 'text-red-800');
+        }
+    };
+
+    /**
+     * 主應用程式初始化函式。
+     */
+    const initApp = async () => {
+        let firebaseConfig;
+        if (firebaseConfigString) {
+            try {
+                firebaseConfig = JSON.parse(firebaseConfigString);
+                console.log("✅ 使用 Canvas 環境提供的 Firebase 配置。");
+            } catch (e) {
+                console.warn("⚠️ 無法解析 Canvas Firebase 配置，使用備用配置。");
+                firebaseConfig = YOUR_FIREBASE_CONFIG;
+            }
+        } else {
+            firebaseConfig = YOUR_FIREBASE_CONFIG;
+            console.warn("⚠️ 缺少 Canvas Firebase 配置，使用備用配置。");
+        }
+        
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            if (initialAuthToken) {
+                try {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                    console.log("✅ 成功使用自訂令牌登入。");
+                } catch (error) {
+                    console.warn("⚠️ 自訂令牌登入失敗，正在嘗試匿名登入...", error);
+                    await signInAnonymously(auth);
+                }
+            } else {
+                await signInAnonymously(auth);
+                console.log("✅ 成功使用匿名登入。");
+            }
+            
+            console.log("✅ Firebase 已成功初始化。");
+            return true;
+        } catch (e) {
+            console.error("❌ 應用程式初始化失敗:", e);
+            updateStatus(`應用程式初始化失敗: ${e.message}`, 'error');
+            return false;
+        }
+    };
+
+    /**
+     * 點擊按鈕時發送測試數據。
+     */
+    const sendTestData = async () => {
+        sendBtn.disabled = true;
+        updateStatus("正在發送測試數據...", 'success');
+        
+        // 延遲以顯示狀態訊息
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        try {
+            // 這是一個隨機的測試數據
+            const testData = {
+                testValue: Math.random() * 100,
+                timestamp: serverTimestamp()
+            };
+
+            await addDoc(collection(db, `artifacts/${appId}/public/data/test_data_writer`), testData);
+            updateStatus("✅ 數據已成功寫入！請檢查您的 Firebase Console 中是否出現 'test_data_writer' 集合。", 'success');
+        } catch (e) {
+            console.error("❌ 寫入測試數據失敗:", e);
+            updateStatus(`❌ 寫入測試數據失敗: ${e.message}`, 'error');
+        } finally {
+            sendBtn.disabled = false;
+        }
+    };
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        const isInitSuccess = await initApp();
+        if (isInitSuccess) {
+            sendBtn.addEventListener('click', sendTestData);
+        } else {
+            sendBtn.disabled = true;
+        }
+    });
+</script>
+
+</body>
+</html>
