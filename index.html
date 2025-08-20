@@ -168,10 +168,17 @@
      * @param {Array<Object>} data 包含溫濕度讀數的陣列。
      */
     const updateChartData = (data) => {
-        // 根據 timestamp 屬性對數據進行排序
-        data.sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
-        
-        const labels = data.map(d => d.timestamp.toDate().toLocaleTimeString());
+        // 根據 timestamp 屬性對數據進行排序 (在客戶端處理以避免索引問題)
+        data.sort((a, b) => {
+            const timeA = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(0);
+            const timeB = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(0);
+            return timeA - timeB;
+        });
+
+        const labels = data.map(d => {
+            const timestamp = d.timestamp?.toDate ? d.timestamp.toDate() : new Date();
+            return timestamp.toLocaleTimeString();
+        });
         const temperatures = data.map(d => d.temperature);
         const humidities = data.map(d => d.humidity);
 
@@ -203,6 +210,7 @@
                 throw new Error('數據格式不正確，缺少 temperature/temp 或 humidity/hum 屬性。');
             }
         } catch (e) {
+            console.warn('⚠️ 解析 JSON 數據失敗，嘗試解析為單一字串。', e);
             const parts = messageString.split(',').map(part => parseFloat(part.trim()));
             if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
                 temp = parts[0];
@@ -267,7 +275,9 @@
                 console.error('❌ MQTT 連線錯誤:', err);
                 displayError(`連線錯誤: ${err.message}`);
                 updateStatus(MQTT_STATUS.ERROR);
-                client.end();
+                if (client) {
+                    client.end();
+                }
             });
             client.on('close', () => {
                 console.log('連線已關閉');
@@ -293,7 +303,7 @@
             const readings = [];
             querySnapshot.forEach((doc) => {
                 const data = doc.data();
-                if (data.timestamp && data.timestamp.toDate) {
+                if (data.timestamp && data.temperature && data.humidity) {
                     readings.push(data);
                 }
             });
