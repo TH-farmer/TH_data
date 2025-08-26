@@ -1,302 +1,186 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IoT 數據儀表板</title>
+    <title>溫濕度感應器儀表板</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
-        canvas {
-            height: 300px !important;
+            background-color: #f3f4f6;
+            color: #1f2937;
         }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen p-4 sm:p-8 flex items-center justify-center">
+<body class="p-4 sm:p-8 md:p-12">
 
-<div class="w-full max-w-5xl bg-white rounded-lg shadow-xl p-6 sm:p-8">
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
-        <h1 class="text-2xl sm:text-3xl font-bold text-gray-800 mb-2 sm:mb-0">IoT 數據儀表板</h1>
-        <div class="flex flex-col sm:flex-row items-end sm:items-center space-x-0 sm:space-x-4">
-            <div id="status-container" class="flex items-center space-x-2 mb-2 sm:mb-0">
-                <span id="firebase-status-dot" class="block w-3 h-3 rounded-full animate-pulse bg-red-500"></span>
-                <span id="firebase-status-text" class="px-4 py-2 rounded-full text-sm font-semibold bg-red-100 text-red-800">
-                    正在連線...
-                </span>
+    <div id="chart-container" class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+        <h1 class="text-2xl sm:text-3xl font-bold text-center mb-4 text-indigo-600">溫濕度感應器即時數據</h1>
+        <div class="relative h-64 sm:h-80 md:h-96">
+            <canvas id="tempChart"></canvas>
+            <div id="loading" class="absolute inset-0 flex items-center justify-center bg-white bg-opacity-80 rounded-xl transition-opacity duration-300">
+                <div class="flex flex-col items-center">
+                    <div class="animate-spin rounded-full h-12 w-12 border-4 border-t-4 border-indigo-500"></div>
+                    <p class="mt-4 text-gray-500">正在從 Firestore 載入數據...</p>
+                </div>
             </div>
-            <div id="user-id-container" class="text-xs text-gray-500">
-                <span id="user-id-display">使用者 ID: ---</span>
+            <div id="no-data" class="absolute inset-0 flex items-center justify-center bg-white bg-opacity-80 rounded-xl transition-opacity duration-300 hidden">
+                <p class="text-gray-500 text-center">目前資料庫中沒有可用的溫濕度數據。</p>
             </div>
         </div>
     </div>
 
-    <div id="error-message" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-        <strong class="font-bold">連線失敗：</strong>
-        <span class="block sm:inline" id="error-text"></span>
-    </div>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, onSnapshot, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-8">
-        <div class="bg-blue-50 p-6 rounded-lg shadow-md flex-1">
-            <h2 class="text-xl font-semibold text-blue-800 mb-2">溫度</h2>
-            <p id="temperature-display" class="text-4xl sm:text-5xl font-extrabold text-blue-600">---</p>
-            <span class="text-gray-500 mt-1">°C</span>
-        </div>
-        <div class="bg-green-50 p-6 rounded-lg shadow-md flex-1">
-            <h2 class="text-xl font-semibold text-green-800 mb-2">濕度</h2>
-            <p id="humidity-display" class="text-4xl sm:text-5xl font-extrabold text-green-600">---</p>
-            <span class="text-gray-500 mt-1">%</span>
-        </div>
-    </div>
-    
-    <!-- 新增歷史數據筆數控制 -->
-    <div class="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
-        <label for="data-limit" class="text-gray-700">歷史資料筆數：</label>
-        <input type="number" id="data-limit" value="50" min="1" max="500" class="w-full sm:w-auto flex-1 border border-gray-300 rounded-lg p-2 text-center">
-        <button id="update-chart-btn" class="w-full sm:w-auto bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow transition-all duration-300 transform hover:scale-105">
-            更新圖表
-        </button>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-        <div class="bg-white p-6 rounded-lg shadow-md">
-            <canvas id="temperatureChart"></canvas>
-        </div>
-        <div class="bg-white p-6 rounded-lg shadow-md">
-            <canvas id="humidityChart"></canvas>
-        </div>
-    </div>
-
-</div>
-
-<script type="module">
-    // Firebase SDK 導入
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, onSnapshot, collection, query, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-    // -------------------------------------------------------------------------
-    // 全域變數和 Firebase 配置
-    // -------------------------------------------------------------------------
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-    const firebaseConfigString = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
-
-    let app, auth, db, userId;
-    let temperatureChart = null;
-    let humidityChart = null;
-    let isInitialized = false;
-    let unsubscribe = null; // 用於儲存 Firestore 監聽的函式，方便取消監聽
-
-    // 備用 Firebase 專案配置資訊 (在 Canvas 環境中通常不會用到)
-    const YOUR_FIREBASE_CONFIG = {
-        apiKey: "AIzaSyACJre2XVZ3KI3jAfsewGjFmhSV219ztO0",
-        authDomain: "th-re-m.firebaseapp.com",
-        projectId: "th-re-m",
-        storageBucket: "th-re-m.firebase-storage.app",
-        messagingSenderId: "831215013774",
-        appId: "1:831215013774:web:1a11969fd77e8db6c21edf",
-        measurementId: "G-NFD3S3V69L"
-    };
-
-    const FIREBASE_STATUS = {
-        CONNECTING: '正在連線...',
-        CONNECTED: '已連線',
-        ERROR: '連線錯誤',
-    };
-
-    /**
-     * 更新儀表板上的狀態顯示。
-     * @param {string} status 要顯示的狀態。
-     */
-    const updateStatus = (status) => {
-        const statusText = document.getElementById('firebase-status-text');
-        const statusDot = document.getElementById('firebase-status-dot');
-        statusText.textContent = status;
-        statusDot.className = 'block w-3 h-3 rounded-full animate-pulse';
-        const colorMap = {
-            [FIREBASE_STATUS.CONNECTED]: 'green',
-            [FIREBASE_STATUS.CONNECTING]: 'yellow',
-            [FIREBASE_STATUS.ERROR]: 'red',
-        };
-        const color = colorMap[status] || 'red';
-        statusText.className = `px-4 py-2 rounded-full text-sm font-semibold bg-${color}-100 text-${color}-800`;
-        statusDot.classList.add(`bg-${color}-500`);
-    };
-
-    /**
-     * 在儀表板上顯示錯誤訊息。
-     * @param {string} message 要顯示的錯誤訊息。
-     */
-    const displayError = (message) => {
-        const errorContainer = document.getElementById('error-message');
-        const errorText = document.getElementById('error-text');
-        errorText.textContent = message;
-        errorContainer.classList.remove('hidden');
-    };
-
-    /**
-     * 初始化 Chart.js 圖表。
-     */
-    const initCharts = () => {
-        const tempCtx = document.getElementById('temperatureChart').getContext('2d');
-        const humCtx = document.getElementById('humidityChart').getContext('2d');
-
-        if (temperatureChart) { temperatureChart.destroy(); }
-        if (humidityChart) { humidityChart.destroy(); }
+        // 從環境變數中取得 Firebase 配置
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        temperatureChart = new Chart(tempCtx, {
-            type: 'line',
-            data: { labels: [], datasets: [{ label: '溫度 (°C)', data: [], borderColor: 'rgb(255, 99, 132)', backgroundColor: 'rgba(255, 99, 132, 0.5)', tension: 0.1 }] },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '即時溫度趨勢' } }, scales: { x: { title: { display: true, text: '時間' } }, y: { title: { display: true, text: '溫度 (°C)' } } } }
-        });
-        humidityChart = new Chart(humCtx, {
-            type: 'line',
-            data: { labels: [], datasets: [{ label: '濕度 (%)', data: [], borderColor: 'rgb(53, 162, 235)', backgroundColor: 'rgba(53, 162, 235, 0.5)', tension: 0.1 }] },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '即時濕度趨勢' } }, scales: { x: { title: { display: true, text: '時間' } }, y: { title: { display: true, text: '濕度 (%)' } } } }
-        });
-    };
+        // 初始化 Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
 
-    /**
-     * 更新圖表數據。
-     * @param {Array<Object>} data 包含溫濕度讀數的陣列。
-     */
-    const updateChartData = (data) => {
-        data.sort((a, b) => {
-            const timeA = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(0);
-            const timeB = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(0);
-            return timeA - timeB;
-        });
+        // UI 元素
+        const loadingElement = document.getElementById('loading');
+        const noDataElement = document.getElementById('no-data');
+        const ctx = document.getElementById('tempChart').getContext('2d');
 
-        const labels = data.map(d => {
-            const timestamp = d.timestamp?.toDate ? d.timestamp.toDate() : new Date();
-            return timestamp.toLocaleTimeString();
-        });
-        const temperatures = data.map(d => d.temperature);
-        const humidities = data.map(d => d.humidity);
+        let tempChart;
 
-        if (temperatures.length > 0) {
-            document.getElementById('temperature-display').textContent = temperatures[temperatures.length - 1].toFixed(1);
-            document.getElementById('humidity-display').textContent = humidities[humidities.length - 1].toFixed(1);
-        }
-
-        temperatureChart.data.labels = labels;
-        temperatureChart.data.datasets[0].data = temperatures;
-        temperatureChart.update();
-
-        humidityChart.data.labels = labels;
-        humidityChart.data.datasets[0].data = humidities;
-        humidityChart.update();
-    };
-
-    /**
-     * 監聽 Firestore 的即時數據。
-     * @param {number} dataLimit 要讀取的資料筆數。
-     */
-    const listenToFirestore = (dataLimit) => {
-        // 如果已經有監聽器，先取消它以避免重複監聽
-        if (unsubscribe) {
-            unsubscribe();
-        }
-
-        const sensorReadingsRef = collection(db, `artifacts/${appId}/public/data/sensor_data`);
-        
-        const q = query(sensorReadingsRef, limit(dataLimit));
-
-        unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const readings = [];
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
-                if (data.timestamp && typeof data.temperature === 'number' && typeof data.humidity === 'number') {
-                    readings.push(data);
+        // 初始化圖表
+        function initChart() {
+            if (tempChart) {
+                tempChart.destroy();
+            }
+            tempChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '溫度 (°C)',
+                        data: [],
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1,
+                        fill: false
+                    }, {
+                        label: '濕度 (%)',
+                        data: [],
+                        borderColor: 'rgb(255, 99, 132)',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: '時間'
+                            },
+                            ticks: {
+                                display: false // 隱藏 X 軸標籤以避免擁擠
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: '數值'
+                            },
+                            beginAtZero: false
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                        }
+                    }
                 }
             });
-            console.log(`✅ 從 Firestore 收到 ${readings.length} 筆即時更新。`);
-            updateChartData(readings);
-            updateStatus(FIREBASE_STATUS.CONNECTED);
-        }, (error) => {
-            console.error("❌ Firestore 監聽失敗:", error);
-            displayError(`Firestore 監聽失敗: ${error.message}`);
-            updateStatus(FIREBASE_STATUS.ERROR);
-        });
-    };
-
-    /**
-     * 主應用程式初始化函式。
-     */
-    const initApp = async () => {
-        if (isInitialized) return;
-        isInitialized = true;
-        
-        let firebaseConfig;
-        if (firebaseConfigString) {
-            try {
-                firebaseConfig = JSON.parse(firebaseConfigString);
-                console.log("✅ 使用 Canvas 環境提供的 Firebase 配置。");
-            } catch (e) {
-                console.warn("⚠️ 無法解析 Canvas Firebase 配置，使用備用配置。");
-                firebaseConfig = YOUR_FIREBASE_CONFIG;
-            }
-        } else {
-            firebaseConfig = YOUR_FIREBASE_CONFIG;
-            console.warn("⚠️ 缺少 Canvas Firebase 配置，使用備用配置。");
         }
-        
-        try {
-            app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
 
-            if (initialAuthToken) {
-                try {
+        // 從 Firestore 讀取資料
+        async function fetchSensorData() {
+            try {
+                // 使用自訂憑證或匿名登入
+                if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
-                    console.log("✅ 成功使用自訂令牌登入。");
-                } catch (error) {
-                    console.warn("⚠️ 自訂令牌登入失敗，正在嘗試匿名登入...", error);
+                } else {
                     await signInAnonymously(auth);
                 }
-            } else {
-                await signInAnonymously(auth);
-                console.log("✅ 成功使用匿名登入。");
-            }
-            
-            userId = auth.currentUser?.uid || crypto.randomUUID();
-            document.getElementById('user-id-display').textContent = `使用者 ID: ${userId}`;
-            console.log("✅ Firebase 已成功初始化。");
-            
-            // 初始化時監聽預設筆數 (50) 的數據
-            listenToFirestore(50);
 
-        } catch (e) {
-            console.error("❌ 應用程式初始化失敗:", e);
-            displayError(`應用程式初始化失敗: ${e.message}`);
-            updateStatus(FIREBASE_STATUS.ERROR);
+                // *** 這裡修改了資料讀取路徑，直接讀取 'sensor_data' 資料集 ***
+                const collectionRef = collection(db, "sensor_data");
+                
+                // 建立查詢，依照時間戳記排序並限制為最近 100 筆
+                const q = query(collectionRef, orderBy("timestamp", "asc"), limit(100));
+
+                onSnapshot(q, (snapshot) => {
+                    const chartData = {
+                        labels: [],
+                        temperatures: [],
+                        humidities: []
+                    };
+                    
+                    if (snapshot.empty) {
+                        loadingElement.classList.add('hidden');
+                        noDataElement.classList.remove('hidden');
+                        if (tempChart) tempChart.destroy();
+                        return;
+                    }
+
+                    snapshot.forEach((doc) => {
+                        const data = doc.data();
+                        // 確保 timestamp 存在且是數字
+                        const timestamp = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : 'N/A';
+                        if (data.temperature !== undefined) {
+                            chartData.labels.push(timestamp);
+                            chartData.temperatures.push(data.temperature);
+                            chartData.humidities.push(data.humidity);
+                        }
+                    });
+
+                    if (chartData.labels.length > 0) {
+                        loadingElement.classList.add('hidden');
+                        noDataElement.classList.add('hidden');
+                        if (!tempChart) {
+                            initChart();
+                        }
+                        tempChart.data.labels = chartData.labels;
+                        tempChart.data.datasets[0].data = chartData.temperatures;
+                        tempChart.data.datasets[1].data = chartData.humidities;
+                        tempChart.update();
+                    }
+                }, (error) => {
+                    console.error("即時讀取 Firestore 數據時發生錯誤:", error);
+                    loadingElement.classList.add('hidden');
+                    noDataElement.textContent = "載入資料時發生錯誤。請檢查瀏覽器控制台。";
+                    noDataElement.classList.remove('hidden');
+                });
+
+            } catch (error) {
+                console.error("Firebase 認證或讀取失敗:", error);
+                loadingElement.classList.add('hidden');
+                noDataElement.textContent = "Firebase 認證失敗。請檢查設定。";
+                noDataElement.classList.remove('hidden');
+            }
         }
-    };
 
-    document.addEventListener('DOMContentLoaded', () => {
-        initCharts();
-        initApp();
-
-        // 為更新按鈕添加事件監聽器
-        document.getElementById('update-chart-btn').addEventListener('click', () => {
-            const limitInput = document.getElementById('data-limit');
-            const newLimit = parseInt(limitInput.value, 10);
-            if (newLimit > 0) {
-                console.log(`ℹ️ 更新資料筆數為 ${newLimit}`);
-                listenToFirestore(newLimit);
-            } else {
-                alert('請輸入有效的數字！');
-            }
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            fetchSensorData();
         });
-    });
-</script>
+    </script>
 </body>
 </html>
