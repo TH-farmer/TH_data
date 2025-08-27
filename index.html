@@ -18,6 +18,7 @@
 
     <div id="chart-container" class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
         <h1 class="text-2xl sm:text-3xl font-bold text-center mb-4 text-indigo-600">溫濕度感應器即時數據</h1>
+        <p id="data-path-display" class="text-sm text-gray-500 text-center mb-4">正在讀取集合: /sensor_data</p>
         <div class="relative h-64 sm:h-80 md:h-96">
             <canvas id="tempChart"></canvas>
             <div id="loading" class="absolute inset-0 flex items-center justify-center bg-white bg-opacity-80 rounded-xl transition-opacity duration-300">
@@ -50,6 +51,7 @@
         const loadingElement = document.getElementById('loading');
         const noDataElement = document.getElementById('no-data');
         const ctx = document.getElementById('tempChart').getContext('2d');
+        const dataPathDisplay = document.getElementById('data-path-display');
 
         let tempChart;
 
@@ -120,8 +122,12 @@
                     await signInAnonymously(auth);
                 }
 
-                // *** 這裡修改了資料讀取路徑，直接讀取 'sensor_data' 資料集 ***
-                const collectionRef = collection(db, "sensor_data");
+                const collectionPath = "sensor_data";
+                
+                // 顯示正在讀取的路徑
+                dataPathDisplay.textContent = `正在讀取集合: /${collectionPath}`;
+                
+                const collectionRef = collection(db, collectionPath);
                 
                 // 建立查詢，依照時間戳記排序並限制為最近 100 筆
                 const q = query(collectionRef, orderBy("timestamp", "asc"), limit(100));
@@ -132,16 +138,19 @@
                         temperatures: [],
                         humidities: []
                     };
-                    
+
+                    console.log("從 Firestore 讀取到新的快照...");
                     if (snapshot.empty) {
+                        console.log("快照為空，資料庫中沒有數據。");
                         loadingElement.classList.add('hidden');
                         noDataElement.classList.remove('hidden');
                         if (tempChart) tempChart.destroy();
                         return;
                     }
-
+                    
                     snapshot.forEach((doc) => {
                         const data = doc.data();
+                        console.log("讀取到文件:", data); // 在主控台印出每一筆文件
                         // 確保 timestamp 存在且是數字
                         const timestamp = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : 'N/A';
                         if (data.temperature !== undefined) {
