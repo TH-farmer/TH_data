@@ -1,317 +1,241 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>即時感測器資料儀表板</title>
+    <title>即時感測器數據儀表板</title>
+    <!-- 載入 Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 Chart.js for data visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script type="module">
-        // Firebase 模組的引入
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Tailwind CSS 的 Inter 字體設定
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                }
-            }
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
         }
+        .container {
+            max-width: 1200px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-6 flex items-center justify-center min-h-screen">
 
-        let app, db, auth;
-        let unsubscribe;
-        let chartInstance;
-        let chartData = {
-            labels: [],
-            datasets: [{
-                label: '溫度 (°C)',
-                borderColor: 'rgb(255, 99, 132)',
-                backgroundColor: 'rgba(255, 99, 132, 0.5)',
-                data: [],
-                yAxisID: 'y',
-            }, {
-                label: '濕度 (%)',
-                borderColor: 'rgb(54, 162, 235)',
-                backgroundColor: 'rgba(54, 162, 235, 0.5)',
-                data: [],
-                yAxisID: 'y1',
-            }]
-        };
+    <div class="container bg-white shadow-xl rounded-2xl p-8 space-y-8 max-w-4xl w-full">
+        <!-- 標題 -->
+        <div class="text-center space-y-2">
+            <h1 class="text-3xl font-bold text-gray-800">感測器數據儀表板</h1>
+            <p class="text-gray-500">即時監控溫度與濕度數據</p>
+        </div>
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
-            authDomain: "data-store-b0994.firebaseapp.com",
-            projectId: "data-store-b0994",
-            storageBucket: "data-store-b0994.firebasestorage.app",
-            messagingSenderId: "484608370709",
-            appId: "1:484608370709:web:28ed2b8c5a31644ea5861c",
-            measurementId: "G-1NBWFP8ZNR"
-        };
-        
-        // 頁面載入完成後初始化 Firebase
-        window.onload = function() {
-            initializeFirebase(firebaseConfig);
-        };
+        <!-- 圖表區 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- 溫度圖表 -->
+            <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 shadow-sm">
+                <h2 class="text-xl font-semibold text-blue-800 mb-4">溫度變化 (C°)</h2>
+                <div class="relative h-64">
+                    <canvas id="temperatureChart"></canvas>
+                </div>
+            </div>
+            <!-- 濕度圖表 -->
+            <div class="bg-green-50 border border-green-200 rounded-xl p-4 shadow-sm">
+                <h2 class="text-xl font-semibold text-green-800 mb-4">濕度變化 (%)</h2>
+                <div class="relative h-64">
+                    <canvas id="humidityChart"></canvas>
+                </div>
+            </div>
+        </div>
 
-        async function initializeFirebase(config) {
+        <!-- 數據表格區 -->
+        <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 shadow-sm">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4">最新數據</h2>
+            <div class="overflow-x-auto rounded-lg border border-gray-300">
+                <table id="dataTable" class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-100">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">時間戳記</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">溫度 (C°)</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">濕度 (%)</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <!-- 資料將會透過 JavaScript 動態生成 -->
+                    </tbody>
+                </table>
+            </div>
+            <p id="data-status" class="mt-4 text-center text-sm text-gray-600">正在載入數據...</p>
+        </div>
+    </div>
+
+    <!-- Firebase 和應用程式邏輯 -->
+    <script type="module">
+        // Firebase 相關 import
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 全域變數，由 Canvas 環境自動提供
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let tempChart, humChart;
+
+        // 初始化 Firebase
+        async function initializeFirebase() {
             try {
-                // 初始化 Firebase 應用程式
-                app = initializeApp(config);
-                db = getFirestore(app);
+                if (!firebaseConfig) {
+                    console.error("Firebase config is missing.");
+                    document.getElementById('data-status').textContent = "錯誤：缺少 Firebase 配置。";
+                    return;
+                }
+
+                const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
+                db = getFirestore(app);
 
-                // 使用匿名登入
-                await signInAnonymously(auth);
-                console.log("Firebase 連線成功: 匿名登入成功！");
+                // 根據是否有認證代幣進行登入
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                console.log("Firebase 認證成功！");
 
-                // 顯示介面並監聽數據
-                document.getElementById('setup-form').classList.remove('hidden');
-                document.getElementById('loading-message').classList.add('hidden');
-                document.getElementById('data-view').classList.add('hidden');
-            
+                // 認證成功後，開始監聽資料
+                setupDataListener();
+
             } catch (error) {
                 console.error("Firebase 連線失敗:", error);
-                displayError(`Firebase 連線失敗: ${error.message}`);
+                document.getElementById('data-status').textContent = `Firebase 連線失敗: ${error.message}`;
             }
         }
 
-        // 啟動 Firestore 監聽器
-        function startFirestoreListener(collectionPath, tempField, humiField, timeField, dataLimit) {
-            if (!db) {
-                displayError('Firebase Firestore 未初始化。');
-                return;
-            }
+        // 設定資料監聽器
+        function setupDataListener() {
+            const userId = auth.currentUser?.uid || 'anonymous';
+            const dataPath = `artifacts/${appId}/public/data/sensor_data`;
 
-            // 如果已經有監聽器，先取消
-            if (unsubscribe) {
-                unsubscribe();
-            }
+            const dataCollection = collection(db, dataPath);
+            // 注意：我們移除 orderBy 以避免潛在的索引問題，改為在客戶端排序。
+            const q = query(dataCollection);
 
-            try {
-                const q = query(collection(db, collectionPath), orderBy(timeField, 'desc'), limit(parseInt(dataLimit)));
-                unsubscribe = onSnapshot(q, (querySnapshot) => {
-                    const sensorData = [];
-                    querySnapshot.forEach((doc) => {
-                        const data = doc.data();
-                        if (data[tempField] !== undefined && data[humiField] !== undefined) {
-                            sensorData.push({
-                                temp: data[tempField],
-                                humi: data[humiField],
-                                time: data[timeField].toDate ? data[timeField].toDate() : new Date(), // 處理不同格式的時間戳
-                            });
-                        }
-                    });
-
-                    // 將資料反轉，讓圖表從舊到新顯示
-                    sensorData.reverse();
-                    
-                    // 更新圖表資料
-                    chartData.labels = sensorData.map(d => d.time.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-                    chartData.datasets[0].data = sensorData.map(d => d.temp);
-                    chartData.datasets[1].data = sensorData.map(d => d.humi);
-
-                    // 重新繪製圖表
-                    updateChart();
-
-                    // 顯示資料
-                    updateTable(sensorData, tempField, humiField, timeField);
-
-                    // 顯示圖表
-                    document.getElementById('data-view').classList.remove('hidden');
-                    document.getElementById('loading-message').classList.add('hidden');
-
-                }, (error) => {
-                    console.error("即時資料監聽失敗:", error);
-                    displayError(`即時資料監聽失敗: ${error.message}`);
+            onSnapshot(q, (snapshot) => {
+                const data = [];
+                snapshot.forEach((doc) => {
+                    data.push({ id: doc.id, ...doc.data() });
                 });
 
-            } catch (e) {
-                displayError(`請確認集合路徑與欄位名稱是否正確。錯誤訊息: ${e.message}`);
-                console.error(e);
-            }
-        }
+                // 根據時間戳記在客戶端進行排序
+                data.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-        // 渲染表格
-        function updateTable(data, tempField, humiField, timeField) {
-            const tbody = document.getElementById('data-table').querySelector('tbody');
-            tbody.innerHTML = '';
-            data.forEach((d) => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800">${d.time.toLocaleString('zh-TW')}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800">${d.temp}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800">${d.humi}</td>
-                `;
-                tbody.appendChild(row);
+                updateUI(data);
+                console.log("數據已更新。", data);
+            }, (error) => {
+                console.error("即時資料監聽失敗:", error);
+                document.getElementById('data-status').textContent = `資料監聽失敗: ${error.message}`;
             });
         }
 
-        // 顯示錯誤訊息
-        function displayError(message) {
-            const errorMessageDiv = document.getElementById('error-message');
-            errorMessageDiv.textContent = message;
-            errorMessageDiv.classList.remove('hidden');
-        }
+        // 更新 UI (圖表和表格)
+        function updateUI(data) {
+            const tableBody = document.querySelector('#dataTable tbody');
+            tableBody.innerHTML = ''; // 清空舊的表格內容
 
-        // 更新圖表
-        function updateChart() {
-            const ctx = document.getElementById('myChart').getContext('2d');
-            if (chartInstance) {
-                chartInstance.data = chartData;
-                chartInstance.update();
-            } else {
-                chartInstance = new Chart(ctx, {
+            const timestamps = [];
+            const temperatures = [];
+            const humidities = [];
+
+            if (data.length === 0) {
+                document.getElementById('data-status').textContent = "尚無數據。請在 Firestore 中新增文件。";
+                return;
+            }
+
+            // 處理數據並更新圖表
+            data.slice(0, 20).reverse().forEach(item => { // 只顯示最新的20筆數據
+                const timestamp = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : 'N/A';
+                timestamps.push(timestamp);
+                temperatures.push(item.temperature);
+                humidities.push(item.humidity);
+
+                // 建立表格行
+                const row = document.createElement('tr');
+                row.className = 'bg-white hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${timestamp}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item.temperature !== undefined ? item.temperature.toFixed(2) : 'N/A'} °C</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item.humidity !== undefined ? item.humidity.toFixed(2) : 'N/A'} %</td>
+                `;
+                tableBody.prepend(row); // 將新行加到最前面
+            });
+
+            // 初始化或更新圖表
+            if (!tempChart) {
+                const tempCtx = document.getElementById('temperatureChart').getContext('2d');
+                tempChart = new Chart(tempCtx, {
                     type: 'line',
-                    data: chartData,
+                    data: {
+                        labels: timestamps,
+                        datasets: [{
+                            label: '溫度 (C°)',
+                            data: temperatures,
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                            tension: 0.1,
+                            fill: true
+                        }]
+                    },
                     options: {
                         responsive: true,
-                        interaction: {
-                            mode: 'index',
-                            intersect: false,
-                        },
-                        stacked: false,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: '即時溫濕度',
-                                font: {
-                                    size: 16
-                                }
-                            }
-                        },
+                        maintainAspectRatio: false,
                         scales: {
-                            y: {
-                                type: 'linear',
-                                display: true,
-                                position: 'left',
-                                title: {
-                                    display: true,
-                                    text: '溫度 (°C)'
-                                }
-                            },
-                            y1: {
-                                type: 'linear',
-                                display: true,
-                                position: 'right',
-                                title: {
-                                    display: true,
-                                    text: '濕度 (%)'
-                                },
-                                grid: {
-                                    drawOnChartArea: false,
-                                },
-                            },
+                            x: { title: { display: true, text: '時間' } },
+                            y: { title: { display: true, text: '溫度 (C°)' } }
                         }
                     }
                 });
+            } else {
+                tempChart.data.labels = timestamps;
+                tempChart.data.datasets[0].data = temperatures;
+                tempChart.update();
             }
+
+            if (!humChart) {
+                const humCtx = document.getElementById('humidityChart').getContext('2d');
+                humChart = new Chart(humCtx, {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: [{
+                            label: '濕度 (%)',
+                            data: humidities,
+                            borderColor: 'rgb(34, 197, 94)',
+                            backgroundColor: 'rgba(34, 197, 94, 0.2)',
+                            tension: 0.1,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { title: { display: true, text: '時間' } },
+                            y: { title: { display: true, text: '濕度 (%)' } }
+                        }
+                    }
+                });
+            } else {
+                humChart.data.labels = timestamps;
+                humChart.data.datasets[0].data = humidities;
+                humChart.update();
+            }
+            
+            document.getElementById('data-status').textContent = "數據已成功載入並即時更新！";
         }
 
-        // 處理表單提交
-        document.getElementById('setup-form').addEventListener('submit', function(event) {
-            event.preventDefault();
-            const collectionPath = document.getElementById('collection-path').value;
-            const tempField = document.getElementById('temp-field').value;
-            const humiField = document.getElementById('humi-field').value;
-            const timeField = document.getElementById('time-field').value;
-            const dataLimit = document.getElementById('data-limit').value;
-
-            if (collectionPath && tempField && humiField && timeField && dataLimit) {
-                document.getElementById('error-message').classList.add('hidden');
-                startFirestoreListener(collectionPath, tempField, humiField, timeField, dataLimit);
-            } else {
-                displayError('請填寫所有欄位。');
-            }
-        });
-
+        // 在窗口載入完成後啟動 Firebase
+        window.onload = initializeFirebase;
     </script>
-</head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen font-sans antialiased p-4">
-    <div class="bg-white rounded-lg shadow-xl overflow-hidden max-w-4xl w-full">
-        <header class="bg-indigo-600 text-white p-6 text-center">
-            <h1 class="text-3xl font-bold">即時資料儀表板</h1>
-        </header>
-
-        <main class="p-8">
-            <!-- 載入中的訊息 -->
-            <div id="loading-message" class="text-center text-gray-600">
-                <div class="flex items-center justify-center space-x-2">
-                    <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <span>正在連線到 Firebase...</span>
-                </div>
-            </div>
-
-            <!-- 錯誤訊息 -->
-            <div id="error-message" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 hidden" role="alert">
-                <span class="block sm:inline"></span>
-            </div>
-
-            <!-- 表單區塊 -->
-            <div id="setup-form" class="hidden">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">設定您的 Firestore 資料</h2>
-                <form>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label for="collection-path" class="block text-sm font-medium text-gray-700">集合路徑 (Collection Path)</label>
-                            <input type="text" id="collection-path" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: sensor_data">
-                        </div>
-                        <div>
-                            <label for="temp-field" class="block text-sm font-medium text-gray-700">溫度欄位名稱 (Temperature Field)</label>
-                            <input type="text" id="temp-field" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: temperature">
-                        </div>
-                        <div>
-                            <label for="humi-field" class="block text-sm font-medium text-gray-700">濕度欄位名稱 (Humidity Field)</label>
-                            <input type="text" id="humi-field" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: humidity">
-                        </div>
-                        <div>
-                            <label for="time-field" class="block text-sm font-medium text-gray-700">時間戳欄位名稱 (Timestamp Field)</label>
-                            <input type="text" id="time-field" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: timestamp">
-                        </div>
-                        <div class="col-span-1 md:col-span-2">
-                            <label for="data-limit" class="block text-sm font-medium text-gray-700">顯示筆數限制 (Data Limit)</label>
-                            <input type="number" id="data-limit" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: 20" value="20">
-                        </div>
-                    </div>
-                    <div class="mt-6 text-center">
-                        <button type="submit" class="w-full md:w-auto px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                            開始監聽資料
-                        </button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- 資料顯示區塊 -->
-            <div id="data-view" class="hidden">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">即時資料圖表</h2>
-                <div class="bg-gray-50 rounded-lg p-4 mb-8">
-                    <canvas id="myChart" class="w-full h-80"></canvas>
-                </div>
-
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">原始資料表格</h2>
-                <div class="bg-gray-50 rounded-lg overflow-x-auto">
-                    <table id="data-table" class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-100">
-                            <tr>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">時間戳</th>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">溫度</th>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">濕度</th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            <!-- 資料將會動態新增到這裡 -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </main>
-    </div>
 </body>
 </html>
