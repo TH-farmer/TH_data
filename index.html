@@ -168,8 +168,8 @@
                 // 使用匿名認證
                 await firebase.signInAnonymously(auth);
 
-                // 定義我們要監聽的 Firestore 集合路徑
-                const collectionRef = firebase.collection(db, "sensor_data/device1/readings");
+                // *** 修正: 讀取路徑為 'sensor_data' 集合 ***
+                const collectionRef = firebase.collection(db, "sensor_data");
 
                 // 使用 orderBy 和 limit 來獲取最新的數據
                 const q = firebase.query(collectionRef, firebase.orderBy("timestamp", "desc"), firebase.limit(limitCount));
