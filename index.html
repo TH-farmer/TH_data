@@ -56,14 +56,23 @@
     </div>
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
         // IMPORTANT: These variables are provided by the canvas environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // 使用您提供的最新 Firebase 配置 JSON
+        const firebaseConfig = {
+            "apiKey": "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
+            "authDomain": "data-store-b0994.firebaseapp.com",
+            "projectId": "data-store-b0994",
+            "storageBucket": "data-store-b0994.firebasestorage.app",
+            "messagingSenderId": "484608370709",
+            "appId": "1:484608370709:web:9ec8ae5c2c027fe1a5861c",
+            "measurementId": "G-D6FF040MBX"
+        };
 
         const firebaseApp = initializeApp(firebaseConfig);
         const auth = getAuth(firebaseApp);
@@ -123,13 +132,7 @@
                 userIdElement.textContent = '載入中...';
                 
                 try {
-                    // 嘗試用自訂 token 登入
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } else {
-                        // 如果沒有 token，則使用匿名登入
-                        await signInAnonymously(auth);
-                    }
+                    await signInAnonymously(auth);
                 } catch (error) {
                     console.error("Authentication Error:", error);
                     showStatus('登入失敗，請檢查您的設定。', 'text-red-500');
