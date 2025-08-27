@@ -17,12 +17,12 @@
 <body class="p-4 sm:p-8 md:p-12">
 
     <div id="chart-container" class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-        <h1 class="text-2xl sm:text-3xl font-bold text-center mb-4 text-indigo-600">溫濕度感應器即時數據</h1>
-        <p id="project-info" class="text-xs text-gray-400 text-center mb-2"></p>
+        <h1 class="text-2xl sm:text-3xl font-bold text-center mb-4 text-indigo-600">溫濕度感應器即時數據 (離線模式)</h1>
+        <p id="project-info" class="text-xs text-red-500 text-center mb-2">無法連接到 Firebase。正在使用模擬數據。</p>
         <p id="data-path-display" class="text-sm text-gray-500 text-center mb-4"></p>
         <div class="relative h-64 sm:h-80 md:h-96">
             <canvas id="tempChart"></canvas>
-            <div id="loading" class="absolute inset-0 flex items-center justify-center bg-white bg-opacity-80 rounded-xl transition-opacity duration-300">
+            <div id="loading" class="absolute inset-0 flex items-center justify-center bg-white bg-opacity-80 rounded-xl transition-opacity duration-300 hidden">
                 <div class="flex flex-col items-center">
                     <div class="animate-spin rounded-full h-12 w-12 border-4 border-t-4 border-indigo-500"></div>
                     <p class="mt-4 text-gray-500">正在從 Firestore 載入數據...</p>
@@ -56,18 +56,30 @@
         // 嘗試初始化 Firebase
         try {
             if (!firebaseConfigString || firebaseConfigString.trim() === '') {
-                throw new Error('Firebase 配置(__firebase_config)為空。');
+                // 如果沒有提供配置，則使用一個模擬的配置
+                console.warn("Firebase 配置(__firebase_config)為空。正在使用模擬配置。");
+                const firebaseConfig = {
+                    apiKey: "fake-api-key",
+                    authDomain: "fake-project.firebaseapp.com",
+                    projectId: "fake-project-id"
+                };
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                projectInfoElement.textContent = `無法連接到 Firebase。正在使用模擬數據。`;
+                dataPathDisplay.textContent = `正在讀取集合: sensor_data`;
+            } else {
+                const firebaseConfig = JSON.parse(firebaseConfigString);
+                if (!firebaseConfig.projectId) {
+                    throw new Error('Firebase 配置中未提供 "projectId"。');
+                }
+                // 初始化 Firebase
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                projectInfoElement.textContent = `專案 ID: ${firebaseConfig.projectId}`;
+                dataPathDisplay.textContent = `正在讀取集合: sensor_data`;
             }
-            const firebaseConfig = JSON.parse(firebaseConfigString);
-            if (!firebaseConfig.projectId) {
-                throw new Error('Firebase 配置中未提供 "projectId"。');
-            }
-            // 初始化 Firebase
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            projectInfoElement.textContent = `專案 ID: ${firebaseConfig.projectId}`;
-            dataPathDisplay.textContent = `正在讀取集合: sensor_data`;
         } catch (error) {
             console.error("Firebase 初始化失敗:", error);
             if (loadingElement) loadingElement.classList.add('hidden');
