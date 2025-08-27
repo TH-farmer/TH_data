@@ -1,195 +1,178 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Firebase 簽到應用程式</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f3f4f6;
+<meta charset="UTF-8">
+<title>溫濕度監控儀表板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+import { getFirestore, collection, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
+  authDomain: "data-store-b0994.firebaseapp.com",
+  projectId: "data-store-b0994",
+  storageBucket: "data-store-b0994.firebasestorage.app",
+  messagingSenderId: "484608370709",
+  appId: "1:484608370709:web:9ec8ae5c2c027fe1a5861c",
+  measurementId: "G-D6FF040MBX"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let mainChart, tempChart, humChart;
+
+async function fetchData(n=20) {
+  const q = query(collection(db, "sensor_data"), orderBy("timestamp","desc"), limit(n));
+  const snap = await getDocs(q);
+  const data = [];
+  snap.forEach(doc=>data.push(doc.data()));
+  return data.reverse();
+}
+
+function detectOutliers(values) {
+  const avg = values.reduce((a,b)=>a+b,0)/values.length;
+  return values.map(v=>Math.abs(v-avg)>5);
+}
+
+function formatTime(ts) {
+  const d = ts.toDate();
+  return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+}
+
+async function renderCharts() {
+  const num = parseInt(document.getElementById("numRecords").value) || 20;
+  const data = await fetchData(num);
+  if(data.length===0) return;
+
+  const labels = data.map(d=>d.timestamp);
+  const temps = data.map(d=>d.temperature);
+  const hums = data.map(d=>d.humidity);
+  const outliers = detectOutliers(temps);
+
+  const latest = data[data.length-1];
+  document.getElementById("latestData").innerText =
+    `最新時間: ${formatTime(latest.timestamp)} | 溫度: ${latest.temperature}°C | 濕度: ${latest.humidity}%`;
+
+  if(mainChart) mainChart.destroy();
+  if(tempChart) tempChart.destroy();
+  if(humChart) humChart.destroy();
+
+  mainChart = new Chart(document.getElementById("mainChart"), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        {
+          label:'溫度 (°C)',
+          data:temps,
+          borderColor:'red',
+          pointBackgroundColor: outliers.map(o=>o?'red':'red'),
+          pointRadius: outliers.map(o=>o?6:4),
+          fill:false,
+          tension:0.1
+        },
+        {
+          label:'濕度 (%)',
+          data:hums,
+          borderColor:'blue',
+          pointBackgroundColor:'blue',
+          pointRadius:4,
+          fill:false,
+          tension:0.1
         }
-        .container {
-            max-width: 600px;
-        }
-        .btn-primary {
-            background-color: #4f46e5;
-            color: white;
-            padding: 0.75rem 1.5rem;
-            border-radius: 9999px;
-            font-weight: 600;
-            transition: transform 0.2s;
-        }
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        .record-item {
-            border-radius: 0.5rem;
-            background-color: #ffffff;
-            padding: 1rem;
-            margin-top: 0.5rem;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-    </style>
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{position:'top', align:'end', labels:{font:{size:12}}},
+        tooltip:{callbacks:{title: items => formatTime(labels[items[0].dataIndex])}}
+      },
+      scales:{
+        x:{ticks:{maxRotation:0, autoSkip:true, maxTicksLimit:6, callback:(v,i)=>formatTime(labels[i])}}
+      }
+    }
+  });
+
+  tempChart = new Chart(document.getElementById("tempChart"), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[{
+        label:'溫度 (°C)',
+        data:temps,
+        borderColor:'red',
+        pointBackgroundColor: outliers.map(o=>o?'red':'red'),
+        pointRadius: outliers.map(o=>o?6:4),
+        fill:false,
+        tension:0.1
+      }]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{tooltip:{callbacks:{title: items=>formatTime(labels[items[0].dataIndex])}}},
+      scales:{x:{ticks:{autoSkip:true,maxTicksLimit:6,callback:(v,i)=>formatTime(labels[i])}}}
+    }
+  });
+
+  humChart = new Chart(document.getElementById("humChart"), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[{
+        label:'濕度 (%)',
+        data:hums,
+        borderColor:'blue',
+        pointBackgroundColor:'blue',
+        pointRadius:4,
+        fill:false,
+        tension:0.1
+      }]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{tooltip:{callbacks:{title: items=>formatTime(labels[items[0].dataIndex])}}},
+      scales:{x:{ticks:{autoSkip:true,maxTicksLimit:6,callback:(v,i)=>formatTime(labels[i])}}}
+    }
+  });
+}
+
+window.onload = ()=>renderCharts();
+window.refreshCharts = renderCharts;
+</script>
+
+<style>
+body{font-family:sans-serif;text-align:center;margin:0;padding:20px;background:#f3f4f6;}
+#latestData{margin:15px;font-size:18px;font-weight:bold;}
+.controls{margin-bottom:15px;}
+.chart-container{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  grid-template-rows:auto auto;
+  gap:20px;
+  width:90%;
+  margin:0 auto;
+}
+.chart-wrapper{width:100%;}
+#mainChart{grid-column: span 2;height:400px !important;}
+#tempChart,#humChart{height:200px !important;}
+</style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
-    <div class="container bg-white rounded-2xl shadow-xl p-8 space-y-6">
-        <h1 class="text-3xl font-bold text-center text-gray-800">簽到應用程式</h1>
-        <div class="text-center text-gray-600">
-            <p>您的使用者ID (userId):</p>
-            <p id="user-id" class="font-mono bg-gray-200 text-gray-800 p-2 rounded-lg mt-2 break-all"></p>
-        </div>
-
-        <button id="checkin-btn" class="w-full btn-primary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-            點擊簽到
-        </button>
-
-        <div id="status-message" class="text-center font-medium text-sm text-gray-500 mt-4"></div>
-
-        <h2 class="text-xl font-semibold text-gray-700 mt-6">簽到記錄</h2>
-        <div id="records-list" class="space-y-3 mt-4">
-            <!-- 簽到記錄將在此處動態載入 -->
-        </div>
-    </div>
-
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
-
-        // IMPORTANT: These variables are provided by the canvas environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        
-        // 使用您提供的最新 Firebase 配置 JSON
-        const firebaseConfig = {
-            "apiKey": "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
-            "authDomain": "data-store-b0994.firebaseapp.com",
-            "projectId": "data-store-b0994",
-            "storageBucket": "data-store-b0994.firebasestorage.app",
-            "messagingSenderId": "484608370709",
-            "appId": "1:484608370709:web:9ec8ae5c2c027fe1a5861c",
-            "measurementId": "G-D6FF040MBX"
-        };
-
-        const firebaseApp = initializeApp(firebaseConfig);
-        const auth = getAuth(firebaseApp);
-        const db = getFirestore(firebaseApp);
-
-        const userIdElement = document.getElementById('user-id');
-        const checkinBtn = document.getElementById('checkin-btn');
-        const statusMessage = document.getElementById('status-message');
-        const recordsList = document.getElementById('records-list');
-
-        let isAuthReady = false;
-        let userId;
-
-        /**
-         * 顯示狀態訊息。
-         * @param {string} message 要顯示的訊息
-         * @param {string} color 訊息顏色
-         */
-        function showStatus(message, color = 'text-gray-500') {
-            statusMessage.textContent = message;
-            statusMessage.className = `text-center font-medium text-sm mt-4 ${color}`;
-        }
-
-        /**
-         * 處理用戶身份驗證並初始化資料庫監聽。
-         */
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                userId = user.uid;
-                userIdElement.textContent = userId;
-                isAuthReady = true;
-                checkinBtn.disabled = false;
-                showStatus('身份驗證成功，應用程式已準備就緒。', 'text-green-600');
-                
-                // 設定 Firestore 監聽器以即時更新記錄
-                const recordsRef = collection(db, `artifacts/${appId}/users/${userId}/checkins`);
-                const q = query(recordsRef);
-
-                onSnapshot(q, (snapshot) => {
-                    const records = [];
-                    snapshot.forEach(doc => {
-                        records.push(doc.data());
-                    });
-                    
-                    // 根據 timestamp 排序，最新的在最上面
-                    records.sort((a, b) => b.timestamp - a.timestamp);
-
-                    renderRecords(records);
-                }, (error) => {
-                    console.error("Error listening for records:", error);
-                    showStatus('無法載入記錄。', 'text-red-500');
-                });
-
-            } else {
-                isAuthReady = false;
-                checkinBtn.disabled = true;
-                userIdElement.textContent = '載入中...';
-                
-                try {
-                    await signInAnonymously(auth);
-                } catch (error) {
-                    console.error("Authentication Error:", error);
-                    showStatus('登入失敗，請檢查您的設定。', 'text-red-500');
-                }
-            }
-        });
-
-        /**
-         * 將簽到記錄渲染到頁面上。
-         * @param {Array} records 簽到記錄陣列
-         */
-        function renderRecords(records) {
-            recordsList.innerHTML = ''; // 清空舊的記錄
-            if (records.length === 0) {
-                recordsList.innerHTML = '<p class="text-center text-gray-500">尚無簽到記錄。</p>';
-                return;
-            }
-
-            records.forEach((record, index) => {
-                const recordItem = document.createElement('div');
-                recordItem.className = 'record-item flex justify-between items-center';
-                const formattedTime = record.timestamp?.toDate().toLocaleString() || '時間戳記無效';
-                recordItem.innerHTML = `
-                    <span class="text-gray-800 font-medium">簽到 #${records.length - index}</span>
-                    <span class="text-gray-600 text-sm">${formattedTime}</span>
-                `;
-                recordsList.appendChild(recordItem);
-            });
-        }
-
-        /**
-         * 處理簽到按鈕點擊事件。
-         */
-        checkinBtn.addEventListener('click', async () => {
-            if (!isAuthReady) {
-                showStatus('應用程式尚未準備就緒，請稍候。', 'text-yellow-600');
-                return;
-            }
-            
-            showStatus('正在簽到...', 'text-blue-500');
-            checkinBtn.disabled = true;
-
-            const newDocRef = doc(collection(db, `artifacts/${appId}/users/${userId}/checkins`));
-            
-            try {
-                await setDoc(newDocRef, {
-                    timestamp: serverTimestamp(),
-                    userId: userId,
-                });
-                showStatus('簽到成功！', 'text-green-600');
-            } catch (e) {
-                console.error("Error adding document: ", e);
-                showStatus('簽到失敗，請檢查控制台。', 'text-red-500');
-            } finally {
-                checkinBtn.disabled = false;
-            }
-        });
-    </script>
+<body>
+<h2>溫濕度監控儀表板</h2>
+<div id="latestData">讀取中...</div>
+<div class="controls">
+筆數: <input id="numRecords" type="number" value="20" min="5" max="100">
+<button onclick="refreshCharts()">更新</button>
+</div>
+<div class="chart-container">
+  <div class="chart-wrapper"><canvas id="mainChart"></canvas></div>
+  <div class="chart-wrapper"><canvas id="tempChart"></canvas></div>
+  <div class="chart-wrapper"><canvas id="humChart"></canvas></div>
+</div>
 </body>
 </html>
