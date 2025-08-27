@@ -9,7 +9,7 @@
     <script type="module">
         // Firebase 模組的引入
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Tailwind CSS 的 Inter 字體設定
@@ -25,6 +25,7 @@
 
         let app, db, auth;
         let unsubscribe;
+        let chartInstance;
         let chartData = {
             labels: [],
             datasets: [{
@@ -42,27 +43,19 @@
             }]
         };
 
-        const userId = 'dashboard-user';
-
-        // 檢查並使用 Firebase 設定
         const firebaseConfig = {
-          apiKey: "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
-          authDomain: "data-store-b0994.firebaseapp.com",
-          projectId: "data-store-b0994",
-          storageBucket: "data-store-b0994.firebasestorage.app",
-          messagingSenderId: "484608370709",
-          appId: "1:484608370709:web:28ed2b8c5a31644ea5861c",
-          measurementId: "G-1NBWFP8ZNR"
+            apiKey: "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
+            authDomain: "data-store-b0994.firebaseapp.com",
+            projectId: "data-store-b0994",
+            storageBucket: "data-store-b0994.firebasestorage.app",
+            messagingSenderId: "484608370709",
+            appId: "1:484608370709:web:28ed2b8c5a31644ea5861c",
+            measurementId: "G-1NBWFP8ZNR"
         };
-
-        // 初始化應用程式
+        
+        // 頁面載入完成後初始化 Firebase
         window.onload = function() {
-            // 如果 firebaseConfig.apiKey 存在，則進行初始化
-            if (firebaseConfig && firebaseConfig.apiKey) {
-                initializeFirebase(firebaseConfig);
-            } else {
-                displayError('請在程式碼中填入您的 Firebase 設定檔。');
-            }
+            initializeFirebase(firebaseConfig);
         };
 
         async function initializeFirebase(config) {
@@ -165,9 +158,6 @@
             errorMessageDiv.classList.remove('hidden');
         }
 
-        // 圖表物件
-        let chartInstance;
-
         // 更新圖表
         function updateChart() {
             const ctx = document.getElementById('myChart').getContext('2d');
@@ -241,87 +231,87 @@
 
     </script>
 </head>
-<body class="bg-gray-100 font-sans p-4 md:p-8 flex flex-col items-center">
+<body class="bg-gray-100 flex items-center justify-center min-h-screen font-sans antialiased p-4">
+    <div class="bg-white rounded-lg shadow-xl overflow-hidden max-w-4xl w-full">
+        <header class="bg-indigo-600 text-white p-6 text-center">
+            <h1 class="text-3xl font-bold">即時資料儀表板</h1>
+        </header>
 
-    <!-- 主介面卡片 -->
-    <div class="bg-white p-6 md:p-8 rounded-2xl shadow-lg w-full max-w-4xl">
-        <h1 class="text-3xl font-bold mb-4 text-center text-gray-800">Firestore 數據儀表板</h1>
-        <p class="text-gray-600 mb-6 text-center">請輸入您的 Firestore 集合與欄位資訊以開始。</p>
-
-        <!-- 錯誤訊息區塊 -->
-        <div id="error-message" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative mb-4 hidden">
-            <strong class="font-bold">發生錯誤：</strong>
-            <span id="error-text" class="block sm:inline"></span>
-        </div>
-
-        <!-- 載入訊息 -->
-        <div id="loading-message" class="text-center text-gray-500 my-8">
-            <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
-            正在連接 Firebase...
-        </div>
-
-        <!-- 設定表單 (初始顯示) -->
-        <div id="setup-form" class="hidden">
-            <form>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <label for="collection-path" class="block text-sm font-medium text-gray-700 mb-1">集合路徑 (Collection Path)</label>
-                        <input type="text" id="collection-path" value="sensor_data" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label for="temp-field" class="block text-sm font-medium text-gray-700 mb-1">溫度欄位 (Temperature Field)</label>
-                        <input type="text" id="temp-field" value="temp" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label for="humi-field" class="block text-sm font-medium text-gray-700 mb-1">濕度欄位 (Humidity Field)</label>
-                        <input type="text" id="humi-field" value="humi" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label for="time-field" class="block text-sm font-medium text-gray-700 mb-1">時間戳記欄位 (Timestamp Field)</label>
-                        <input type="text" id="time-field" value="created_at" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div class="md:col-span-2">
-                        <label for="data-limit" class="block text-sm font-medium text-gray-700 mb-1">顯示數據筆數 (Data Limit)</label>
-                        <input type="number" id="data-limit" value="10" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                    </div>
+        <main class="p-8">
+            <!-- 載入中的訊息 -->
+            <div id="loading-message" class="text-center text-gray-600">
+                <div class="flex items-center justify-center space-x-2">
+                    <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>正在連線到 Firebase...</span>
                 </div>
-                <div class="mt-6 text-center">
-                    <button type="submit" class="w-full md:w-auto px-6 py-3 bg-blue-600 text-white font-bold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-150 ease-in-out">
-                        開始監聽數據
-                    </button>
-                </div>
-            </form>
-        </div>
-
-        <!-- 圖表與表格 (連接成功後顯示) -->
-        <div id="data-view" class="hidden mt-8">
-            <!-- 圖表 -->
-            <div class="bg-gray-50 rounded-xl p-4 md:p-6 shadow-inner mb-6">
-                <canvas id="myChart"></canvas>
             </div>
 
-            <!-- 表格 -->
-            <div class="overflow-hidden border border-gray-200 rounded-xl">
-                <table id="data-table" class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-100">
-                        <tr>
-                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                時間戳記
-                            </th>
-                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                溫度
-                            </th>
-                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                濕度
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-200">
-                        <!-- 資料會動態插入這裡 -->
-                    </tbody>
-                </table>
+            <!-- 錯誤訊息 -->
+            <div id="error-message" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 hidden" role="alert">
+                <span class="block sm:inline"></span>
             </div>
-        </div>
+
+            <!-- 表單區塊 -->
+            <div id="setup-form" class="hidden">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">設定您的 Firestore 資料</h2>
+                <form>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label for="collection-path" class="block text-sm font-medium text-gray-700">集合路徑 (Collection Path)</label>
+                            <input type="text" id="collection-path" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: sensor_data">
+                        </div>
+                        <div>
+                            <label for="temp-field" class="block text-sm font-medium text-gray-700">溫度欄位名稱 (Temperature Field)</label>
+                            <input type="text" id="temp-field" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: temperature">
+                        </div>
+                        <div>
+                            <label for="humi-field" class="block text-sm font-medium text-gray-700">濕度欄位名稱 (Humidity Field)</label>
+                            <input type="text" id="humi-field" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: humidity">
+                        </div>
+                        <div>
+                            <label for="time-field" class="block text-sm font-medium text-gray-700">時間戳欄位名稱 (Timestamp Field)</label>
+                            <input type="text" id="time-field" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: timestamp">
+                        </div>
+                        <div class="col-span-1 md:col-span-2">
+                            <label for="data-limit" class="block text-sm font-medium text-gray-700">顯示筆數限制 (Data Limit)</label>
+                            <input type="number" id="data-limit" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2" placeholder="例如: 20" value="20">
+                        </div>
+                    </div>
+                    <div class="mt-6 text-center">
+                        <button type="submit" class="w-full md:w-auto px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                            開始監聽資料
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- 資料顯示區塊 -->
+            <div id="data-view" class="hidden">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">即時資料圖表</h2>
+                <div class="bg-gray-50 rounded-lg p-4 mb-8">
+                    <canvas id="myChart" class="w-full h-80"></canvas>
+                </div>
+
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">原始資料表格</h2>
+                <div class="bg-gray-50 rounded-lg overflow-x-auto">
+                    <table id="data-table" class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-100">
+                            <tr>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">時間戳</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">溫度</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">濕度</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <!-- 資料將會動態新增到這裡 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
     </div>
 </body>
 </html>
