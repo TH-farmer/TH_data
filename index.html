@@ -16,18 +16,29 @@
     <!-- 從 CDN 載入 Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, collection, query, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        window.firebase = { initializeApp, getFirestore, collection, query, onSnapshot, orderBy };
+        import { getFirestore, collection, query, onSnapshot, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        window.firebase = { initializeApp, getFirestore, collection, query, onSnapshot, orderBy, limit, getAuth, signInAnonymously };
     </script>
 </head>
 <body class="p-4 sm:p-8 md:p-12">
 
-    <div id="chart-container" class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+    <div class="max-w-4xl mx-auto bg-white p-6 rounded-xl shadow-lg border border-gray-200">
         <h1 class="text-2xl sm:text-3xl font-bold text-center mb-4 text-indigo-600">溫濕度感應器即時數據</h1>
+        
+        <div class="flex items-center justify-center space-x-2 mb-4">
+            <label for="data-limit" class="text-gray-600">顯示筆數:</label>
+            <input type="number" id="data-limit" value="50" min="1" class="w-20 p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-center">
+            <button id="update-limit" class="px-4 py-2 bg-indigo-500 text-white font-medium rounded-md hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors">
+                更新
+            </button>
+        </div>
+
         <div class="text-center mb-4">
             <span id="project-info" class="text-xs text-gray-500 mr-2">正在連接到 Firebase...</span>
             <span id="status-dot" class="inline-block w-3 h-3 rounded-full bg-yellow-400"></span>
         </div>
+        
         <div class="relative h-64 sm:h-80 md:h-96">
             <canvas id="tempChart"></canvas>
             <div id="loading" class="absolute inset-0 flex items-center justify-center bg-white bg-opacity-80 rounded-xl transition-opacity duration-300">
@@ -44,25 +55,32 @@
 
     <script type="module">
         let tempChart;
+        let unsubscribe; // 用來取消之前的監聽器
         const ctx = document.getElementById('tempChart').getContext('2d');
         const loadingElement = document.getElementById('loading');
         const noDataElement = document.getElementById('no-data');
         const projectInfoElement = document.getElementById('project-info');
         const statusDot = document.getElementById('status-dot');
+        const dataLimitInput = document.getElementById('data-limit');
+        const updateLimitButton = document.getElementById('update-limit');
 
-        // 你的 Firebase 設定
+        // 您的 Firebase 專案設定
         const firebaseConfig = {
             apiKey: "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
             authDomain: "data-store-b0994.firebaseapp.com",
             projectId: "data-store-b0994",
             storageBucket: "data-store-b0994.firebasestorage.app",
             messagingSenderId: "484608370709",
-            appId: "1:484608370709:web:28ed2b8c5a31644ea5861c",
-            measurementId: "G-1NBWFP8ZNR"
+            appId: "1:484608370709:web:28ed2b8c5a31644ea5861c"
         };
+        
+        // 初始化 Firebase 應用程式
+        const app = firebase.initializeApp(firebaseConfig);
+        const db = firebase.getFirestore(app);
+        const auth = firebase.getAuth(app);
 
         /**
-         * 初始化 Chart.js 圖表
+         * 初始化 Chart.js 圖表.
          */
         function initChart() {
             if (tempChart) {
@@ -96,7 +114,9 @@
                                 text: '時間'
                             },
                             ticks: {
-                                display: false
+                                display: true,
+                                maxTicksLimit: 10,
+                                autoSkipPadding: 10
                             }
                         },
                         y: {
@@ -121,22 +141,42 @@
         }
 
         /**
-         * 啟動 Firebase 監聽器以讀取即時數據。
+         * 將 Firestore 時間戳記或日期字串轉換為 Date 物件.
+         * @param {Object|string} timestampField 從 Firestore 取得的時間戳記欄位.
+         * @returns {Date} 轉換後的 Date 物件.
          */
-        function startFirestoreListener() {
+        function parseTimestamp(timestampField) {
+            if (timestampField && typeof timestampField.toDate === 'function') {
+                return timestampField.toDate();
+            } else if (typeof timestampField === 'string') {
+                return new Date(timestampField);
+            }
+            return new Date(); // 若解析失敗，則回傳當前日期作為備用
+        }
+
+        /**
+         * 啟動 Firebase 監聽器以讀取即時數據.
+         * @param {number} limitCount 限制讀取的數據筆數.
+         */
+        async function startFirestoreListener(limitCount) {
+            // 如果已存在舊的監聽器，先取消訂閱
+            if (unsubscribe) {
+                unsubscribe();
+            }
+
             try {
-                // 初始化 Firebase 應用程式
-                const app = firebase.initializeApp(firebaseConfig);
-                const db = firebase.getFirestore(app);
+                // 使用匿名認證
+                await firebase.signInAnonymously(auth);
 
                 // 定義我們要監聽的 Firestore 集合路徑
                 const collectionRef = firebase.collection(db, "sensor_data/device1/readings");
 
-                // 使用 onSnapshot 監聽數據變化，並根據 timestamp 排序
-                const q = firebase.query(collectionRef, firebase.orderBy("timestamp"));
+                // 使用 orderBy 和 limit 來獲取最新的數據
+                const q = firebase.query(collectionRef, firebase.orderBy("timestamp", "desc"), firebase.limit(limitCount));
 
-                firebase.onSnapshot(q, (snapshot) => {
-                    loadingElement.classList.add('hidden'); // 隱藏載入中提示
+                // 啟動 onSnapshot 監聽器
+                unsubscribe = firebase.onSnapshot(q, (snapshot) => {
+                    loadingElement.classList.add('hidden');
                     statusDot.classList.remove('bg-yellow-400');
                     statusDot.classList.add('bg-green-500');
                     projectInfoElement.textContent = '已連接到 Firebase。';
@@ -146,13 +186,15 @@
                     const humidities = [];
 
                     if (snapshot.empty) {
-                        noDataElement.classList.remove('hidden'); // 顯示無數據提示
+                        noDataElement.classList.remove('hidden');
                     } else {
-                        noDataElement.classList.add('hidden'); // 隱藏無數據提示
-                        snapshot.forEach((doc) => {
+                        noDataElement.classList.add('hidden');
+                        
+                        // 處理數據並反轉陣列，以確保圖表上的時間軸是正確的
+                        snapshot.docs.reverse().forEach((doc) => {
                             const data = doc.data();
-                            const timestamp = data.timestamp.toDate();
-                            labels.push(timestamp.toLocaleTimeString());
+                            const date = parseTimestamp(data.timestamp);
+                            labels.push(date.toLocaleTimeString());
                             temperatures.push(data.temperature);
                             humidities.push(data.humidity);
                         });
@@ -169,18 +211,27 @@
                 });
 
             } catch (error) {
-                console.error("Firebase 連接失敗:", error);
+                console.error("Firebase 連線失敗:", error);
                 loadingElement.classList.add('hidden');
                 statusDot.classList.remove('bg-yellow-400', 'bg-green-500');
                 statusDot.classList.add('bg-red-500');
-                projectInfoElement.textContent = '連接失敗，請檢查配置和網路。';
+                projectInfoElement.textContent = `連接失敗: ${error.message}`;
             }
         }
 
         // 當 DOM 完全載入後，啟動應用程式
         window.addEventListener('load', () => {
             initChart(); // 先初始化空圖表
-            startFirestoreListener(); // 啟動 Firebase 監聽
+            startFirestoreListener(50); // 預設讀取 50 筆數據
+        });
+
+        // 監聽更新按鈕的點擊事件
+        updateLimitButton.addEventListener('click', () => {
+            const newLimit = parseInt(dataLimitInput.value, 10);
+            if (newLimit > 0) {
+                loadingElement.classList.remove('hidden');
+                startFirestoreListener(newLimit);
+            }
         });
     </script>
 </body>
