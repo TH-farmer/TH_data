@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>農場多點溫濕度監控</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+import { getFirestore, collection, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAK87kwzBCAbcWn5MUSdt6sUvoaAvLJVBs",
+  authDomain: "data-store-b0994.firebaseapp.com",
+  projectId: "data-store-b0994",
+  storageBucket: "data-store-b0994.firebasestorage.app",
+  messagingSenderId: "484608370709",
+  appId: "1:484608370709:web:9ec8ae5c2c027fe1a5861c",
+  measurementId: "G-D6FF040MBX"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let mainChart;
+
+async function fetchData(n=40) { // 增加抓取筆數，因為現在有兩台設備
+  const q = query(collection(db, "sensor_data"), orderBy("timestamp","desc"), limit(n));
+  const snap = await getDocs(q);
+  const dataA = [];
+  const dataB = [];
+  
+  snap.forEach(doc => {
+    const item = doc.data();
+    // 根據 ESP8266 傳來的 "id" 做分流
+    if(item.id === "B") {
+      dataB.push(item);
+    } else {
+      dataA.push(item); // 預設或 ID 為 A 的歸類為 A
+    }
+  });
+
+  return { 
+    a: dataA.reverse(), 
+    b: dataB.reverse() 
+  };
+}
+
+function formatTime(ts) {
+  if(!ts) return "--:--";
+  const d = ts.toDate();
+  return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+}
+
+async function renderCharts() {
+  const num = parseInt(document.getElementById("numRecords").value) || 20;
+  const { a, b } = await fetchData(num * 2); // 抓取雙倍量確保兩邊都有足夠點數
+
+  // 更新最新狀態顯示 (以 A 為主，或顯示兩者)
+  const latestA = a.length > 0 ? a[a.length-1] : {temperature:'--', humidity:'--', timestamp:null};
+  const latestB = b.length > 0 ? b[b.length-1] : {temperature:'--', humidity:'--', timestamp:null};
+  
+  document.getElementById("latestData").innerHTML = 
+    `裝置 A (最新): ${latestA.temperature}°C / ${latestA.humidity}% | ` +
+    `裝置 B (最新): ${latestB.temperature}°C / ${latestB.humidity}%`;
+
+  if(mainChart) mainChart.destroy();
+
+  // 取得 X 軸標籤 (以 A 裝置的時間為基準)
+  const labels = a.map(d => d.timestamp);
+
+  mainChart = new Chart(document.getElementById("mainChart"), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        {
+          label:'裝置 A 溫度 (°C)',
+          data: a.map(d => d.temperature),
+          borderColor:'rgba(255, 99, 132, 1)',
+          backgroundColor: 'rgba(255, 99, 132, 0.2)',
+          fill: false,
+          tension: 0.3
+        },
+        {
+          label:'裝置 B 溫度 (°C)',
+          data: b.map(d => d.temperature),
+          borderColor:'rgba(255, 159, 64, 1)',
+          backgroundColor: 'rgba(255, 159, 64, 0.2)',
+          fill: false,
+          tension: 0.3
+        },
+        {
+          label:'裝置 A 濕度 (%)',
+          data: a.map(d => d.humidity),
+          borderColor:'rgba(54, 162, 235, 1)',
+          fill: false,
+          tension: 0.3,
+          hidden: true // 預設隱藏濕度，讓畫面乾淨點
+        },
+        {
+          label:'裝置 B 濕度 (%)',
+          data: b.map(d => d.humidity),
+          borderColor:'rgba(75, 192, 192, 1)',
+          fill: false,
+          tension: 0.3,
+          hidden: true
+        }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{ position:'top' },
+        tooltip:{ callbacks:{ title: items => formatTime(labels[items[0].dataIndex]) }}
+      },
+      scales:{
+        x:{ ticks:{ maxTicksLimit:10, callback:(v,i) => formatTime(labels[i]) }}
+      }
+    }
+  });
+}
+
+window.onload = () => renderCharts();
+window.refreshCharts = renderCharts;
+</script>
+
+<style>
+body{font-family:sans-serif;text-align:center;margin:0;padding:20px;background:#f3f4f6;}
+#latestData{margin:15px;font-size:16px;font-weight:bold; color: #444;}
+.controls{margin-bottom:15px;}
+.chart-container{ width:95%; margin:0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+#mainChart{height:500px !important;}
+</style>
+</head>
+<body>
+<h2>農場多點溫濕度監控儀表板</h2>
+<div id="latestData">數據同步中...</div>
+<div class="controls">
+顯示筆數: <input id="numRecords" type="number" value="20" min="5" max="100">
+<button onclick="refreshCharts()">立即更新</button>
+</div>
+<div class="chart-container">
+  <canvas id="mainChart"></canvas>
+</div>
+<p style="font-size: 0.8em; color: gray;">提示：點擊上方標籤可切換顯示/隱藏特定曲線</p>
+</body>
+</html>
