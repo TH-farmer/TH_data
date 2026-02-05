@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>農場多點溫濕度監控</title>
+<title>農場火災預警監控儀表板</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
@@ -20,9 +20,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-let mainChart;
+let mainChart, tempChart, humChart, smokeChart;
 
-async function fetchData(n=40) { // 增加抓取筆數，因為現在有兩台設備
+async function fetchData(n=40) {
   const q = query(collection(db, "sensor_data"), orderBy("timestamp","desc"), limit(n));
   const snap = await getDocs(q);
   const dataA = [];
@@ -30,18 +30,10 @@ async function fetchData(n=40) { // 增加抓取筆數，因為現在有兩台�
   
   snap.forEach(doc => {
     const item = doc.data();
-    // 根據 ESP8266 傳來的 "id" 做分流
-    if(item.id === "B") {
-      dataB.push(item);
-    } else {
-      dataA.push(item); // 預設或 ID 為 A 的歸類為 A
-    }
+    if(item.id === "B") dataB.push(item);
+    else dataA.push(item);
   });
-
-  return { 
-    a: dataA.reverse(), 
-    b: dataB.reverse() 
-  };
+  return { a: dataA.reverse(), b: dataB.reverse() };
 }
 
 function formatTime(ts) {
@@ -52,70 +44,64 @@ function formatTime(ts) {
 
 async function renderCharts() {
   const num = parseInt(document.getElementById("numRecords").value) || 20;
-  const { a, b } = await fetchData(num * 2); // 抓取雙倍量確保兩邊都有足夠點數
+  const { a, b } = await fetchData(num * 2);
 
-  // 更新最新狀態顯示 (以 A 為主，或顯示兩者)
-  const latestA = a.length > 0 ? a[a.length-1] : {temperature:'--', humidity:'--', timestamp:null};
+  const latestA = a.length > 0 ? a[a.length-1] : {temperature:'--', humidity:'--', smoke:'--', timestamp:null};
   const latestB = b.length > 0 ? b[b.length-1] : {temperature:'--', humidity:'--', timestamp:null};
   
   document.getElementById("latestData").innerHTML = 
-    `裝置 A (最新): ${latestA.temperature}°C / ${latestA.humidity}% | ` +
-    `裝置 B (最新): ${latestB.temperature}°C / ${latestB.humidity}%`;
+    `<span style="color:#e74c3c">裝置 A (安全哨兵): ${latestA.temperature}°C / ${latestA.humidity}% / 煙霧: ${latestA.smoke || 0}</span> | ` +
+    `<span style="color:#3498db">裝置 B: ${latestB.temperature}°C / ${latestB.humidity}%</span>`;
 
   if(mainChart) mainChart.destroy();
+  if(tempChart) tempChart.destroy();
+  if(humChart) humChart.destroy();
+  if(smokeChart) smokeChart.destroy();
 
-  // 取得 X 軸標籤 (以 A 裝置的時間為基準)
-  const labels = a.map(d => d.timestamp);
+  const labelsA = a.map(d => d.timestamp);
 
+  // 1. 主對比圖表 (包含煙霧雙軸)
   mainChart = new Chart(document.getElementById("mainChart"), {
     type:'line',
     data:{
-      labels,
+      labels: labelsA,
       datasets:[
-        {
-          label:'裝置 A 溫度 (°C)',
-          data: a.map(d => d.temperature),
-          borderColor:'rgba(255, 99, 132, 1)',
-          backgroundColor: 'rgba(255, 99, 132, 0.2)',
-          fill: false,
-          tension: 0.3
-        },
-        {
-          label:'裝置 B 溫度 (°C)',
-          data: b.map(d => d.temperature),
-          borderColor:'rgba(255, 159, 64, 1)',
-          backgroundColor: 'rgba(255, 159, 64, 0.2)',
-          fill: false,
-          tension: 0.3
-        },
-        {
-          label:'裝置 A 濕度 (%)',
-          data: a.map(d => d.humidity),
-          borderColor:'rgba(54, 162, 235, 1)',
-          fill: false,
-          tension: 0.3,
-          hidden: true // 預設隱藏濕度，讓畫面乾淨點
-        },
-        {
-          label:'裝置 B 濕度 (%)',
-          data: b.map(d => d.humidity),
-          borderColor:'rgba(75, 192, 192, 1)',
-          fill: false,
-          tension: 0.3,
-          hidden: true
-        }
+        { label:'A區 溫度', data: a.map(d=>d.temperature), borderColor:'red', yAxisID:'y', tension:0.3 },
+        { label:'B區 溫度', data: b.map(d=>d.temperature), borderColor:'orange', yAxisID:'y', tension:0.3 },
+        { label:'A區 煙霧濃度', data: a.map(d=>d.smoke || 0), borderColor:'green', backgroundColor:'rgba(0,255,0,0.1)', fill:true, yAxisID:'y1', tension:0.3 }
       ]
     },
     options:{
-      responsive:true,
-      maintainAspectRatio:false,
-      plugins:{
-        legend:{ position:'top' },
-        tooltip:{ callbacks:{ title: items => formatTime(labels[items[0].dataIndex]) }}
-      },
+      responsive:true, maintainAspectRatio:false,
       scales:{
-        x:{ ticks:{ maxTicksLimit:10, callback:(v,i) => formatTime(labels[i]) }}
+        y: { type:'linear', display:true, position:'left', title:{display:true, text:'溫度 (°C)'} },
+        y1: { type:'linear', display:true, position:'right', grid:{drawOnChartArea:false}, title:{display:true, text:'煙霧值 (0-1024)'} },
+        x: { ticks:{ callback:(v,i)=>formatTime(labelsA[i]) } }
       }
+    }
+  });
+
+  // 2. 獨立溫度圖
+  tempChart = new Chart(document.getElementById("tempChart"), {
+    type:'line',
+    data:{ labels: labelsA, datasets:[{label:'溫度', data: a.map(d=>d.temperature), borderColor:'red'}] },
+    options:{ responsive:true, maintainAspectRatio:false }
+  });
+
+  // 3. 獨立濕度圖
+  humChart = new Chart(document.getElementById("humChart"), {
+    type:'line',
+    data:{ labels: labelsA, datasets:[{label:'濕度', data: a.map(d=>d.humidity), borderColor:'blue'}] },
+    options:{ responsive:true, maintainAspectRatio:false }
+  });
+
+  // 4. 獨立煙霧圖 (新增)
+  smokeChart = new Chart(document.getElementById("smokeChart"), {
+    type:'line',
+    data:{ labels: labelsA, datasets:[{label:'煙霧濃度 (A區)', data: a.map(d=>d.smoke || 0), borderColor:'green', backgroundColor:'rgba(0,255,0,0.2)', fill:true}] },
+    options:{ 
+        responsive:true, maintainAspectRatio:false,
+        scales: { y: { min: 0, max: 1024 } }
     }
   });
 }
@@ -125,23 +111,33 @@ window.refreshCharts = renderCharts;
 </script>
 
 <style>
-body{font-family:sans-serif;text-align:center;margin:0;padding:20px;background:#f3f4f6;}
-#latestData{margin:15px;font-size:16px;font-weight:bold; color: #444;}
-.controls{margin-bottom:15px;}
-.chart-container{ width:95%; margin:0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-#mainChart{height:500px !important;}
+body{font-family:sans-serif;text-align:center;margin:0;padding:20px;background:#f0f2f5;}
+#latestData{margin:15px;font-size:16px;font-weight:bold;background:white;padding:10px;border-radius:5px;box-shadow:0 2px 4px rgba(0,0,0,0.1);}
+.chart-container{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  grid-template-rows:auto auto;
+  gap:15px;
+  width:95%;
+  margin:0 auto;
+}
+.chart-wrapper{background:white; padding:15px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.05);}
+#mainChartWrapper{grid-column: span 3; height:450px;}
+.small-chart{height:250px;}
 </style>
 </head>
 <body>
-<h2>農場多點溫濕度監控儀表板</h2>
-<div id="latestData">數據同步中...</div>
-<div class="controls">
-顯示筆數: <input id="numRecords" type="number" value="20" min="5" max="100">
-<button onclick="refreshCharts()">立即更新</button>
+<h2>🛡️ 農場多點安全監控系統</h2>
+<div id="latestData">讀取 Firebase 數據中...</div>
+<div style="margin-bottom:15px;">
+  顯示筆數: <input id="numRecords" type="number" value="20" style="width:50px">
+  <button onclick="refreshCharts()">手動更新</button>
 </div>
 <div class="chart-container">
-  <canvas id="mainChart"></canvas>
+  <div class="chart-wrapper" id="mainChartWrapper"><canvas id="mainChart"></canvas></div>
+  <div class="chart-wrapper small-chart"><canvas id="tempChart"></canvas></div>
+  <div class="chart-wrapper small-chart"><canvas id="humChart"></canvas></div>
+  <div class="chart-wrapper small-chart"><canvas id="smokeChart"></canvas></div>
 </div>
-<p style="font-size: 0.8em; color: gray;">提示：點擊上方標籤可切換顯示/隱藏特定曲線</p>
 </body>
 </html>
