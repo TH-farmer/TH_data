@@ -33,24 +33,50 @@ async function fetchData(n=40) {
     if(item.id === "B") dataB.push(item);
     else dataA.push(item);
   });
+  // 記得 reverse 回來讓時間由舊到新排列
   return { a: dataA.reverse(), b: dataB.reverse() };
 }
 
+// --- 修正1：更清楚的時間格式 ---
 function formatTime(ts) {
-  if(!ts) return "--:--";
+  if(!ts || !ts.toDate) return "--:--";
   const d = ts.toDate();
-  return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+  const m = (d.getMonth() + 1).toString().padStart(2, '0');
+  const date = d.getDate().toString().padStart(2, '0');
+  const h = d.getHours().toString().padStart(2, '0');
+  const min = d.getMinutes().toString().padStart(2, '0');
+  const s = d.getSeconds().toString().padStart(2, '0');
+  // 顯示格式：02/09 10:15:30
+  return `${m}/${date} ${h}:${min}:${s}`;
 }
+
+// 通用的圖表設定 (解決小圖亂碼)
+const commonOptions = (labels) => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  scales: {
+    x: {
+      ticks: {
+        maxRotation: 45,
+        minRotation: 45,
+        callback: function(val, index) {
+          return formatTime(labels[index]);
+        }
+      }
+    }
+  }
+});
 
 async function renderCharts() {
   const num = parseInt(document.getElementById("numRecords").value) || 20;
+  // 抓取足夠的數據供兩台裝置顯示
   const { a, b } = await fetchData(num * 2);
 
   const latestA = a.length > 0 ? a[a.length-1] : {temperature:'--', humidity:'--', smoke:'--', timestamp:null};
   const latestB = b.length > 0 ? b[b.length-1] : {temperature:'--', humidity:'--', timestamp:null};
   
   document.getElementById("latestData").innerHTML = 
-    `<span style="color:#e74c3c">裝置 A (安全哨兵): ${latestA.temperature}°C / ${latestA.humidity}% / 煙霧: ${latestA.smoke || 0}</span> | ` +
+    `<span style="color:#e74c3c">裝置 A (廚房): ${latestA.temperature}°C / ${latestA.humidity}% / 煙霧: ${latestA.smoke || 0}</span> | ` +
     `<span style="color:#3498db">裝置 B: ${latestB.temperature}°C / ${latestB.humidity}%</span>`;
 
   if(mainChart) mainChart.destroy();
@@ -75,7 +101,7 @@ async function renderCharts() {
       responsive:true, maintainAspectRatio:false,
       scales:{
         y: { type:'linear', display:true, position:'left', title:{display:true, text:'溫度 (°C)'} },
-        y1: { type:'linear', display:true, position:'right', grid:{drawOnChartArea:false}, title:{display:true, text:'煙霧值 (0-1024)'} },
+        y1: { type:'linear', display:true, position:'right', grid:{drawOnChartArea:false}, title:{display:true, text:'煙霧值'} },
         x: { ticks:{ callback:(v,i)=>formatTime(labelsA[i]) } }
       }
     }
@@ -85,23 +111,26 @@ async function renderCharts() {
   tempChart = new Chart(document.getElementById("tempChart"), {
     type:'line',
     data:{ labels: labelsA, datasets:[{label:'溫度', data: a.map(d=>d.temperature), borderColor:'red'}] },
-    options:{ responsive:true, maintainAspectRatio:false }
+    options: commonOptions(labelsA)
   });
 
   // 3. 獨立濕度圖
   humChart = new Chart(document.getElementById("humChart"), {
     type:'line',
     data:{ labels: labelsA, datasets:[{label:'濕度', data: a.map(d=>d.humidity), borderColor:'blue'}] },
-    options:{ responsive:true, maintainAspectRatio:false }
+    options: commonOptions(labelsA)
   });
 
   // 4. 獨立煙霧圖 (新增)
   smokeChart = new Chart(document.getElementById("smokeChart"), {
     type:'line',
     data:{ labels: labelsA, datasets:[{label:'煙霧濃度 (A區)', data: a.map(d=>d.smoke || 0), borderColor:'green', backgroundColor:'rgba(0,255,0,0.2)', fill:true}] },
-    options:{ 
-        responsive:true, maintainAspectRatio:false,
-        scales: { y: { min: 0, max: 1024 } }
+    options: {
+        ...commonOptions(labelsA),
+        scales: { 
+            x: commonOptions(labelsA).scales.x,
+            y: { min: 0, max: 1024, title: {display:true, text:'煙霧值'} }
+        }
     }
   });
 }
@@ -123,11 +152,11 @@ body{font-family:sans-serif;text-align:center;margin:0;padding:20px;background:#
 }
 .chart-wrapper{background:white; padding:15px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.05);}
 #mainChartWrapper{grid-column: span 3; height:450px;}
-.small-chart{height:250px;}
+.small-chart{height:300px;} /* 稍微增加高度以容納傾斜的時間標籤 */
 </style>
 </head>
 <body>
-<h2>🛡️ 農場多點安全監控系統</h2>
+<h2>🛡️ 農場廚房安全監控儀表板</h2>
 <div id="latestData">讀取 Firebase 數據中...</div>
 <div style="margin-bottom:15px;">
   顯示筆數: <input id="numRecords" type="number" value="20" style="width:50px">
